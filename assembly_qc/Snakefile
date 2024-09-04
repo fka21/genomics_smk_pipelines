@@ -33,7 +33,7 @@ rule busco:
     threads: 30
     params: "-m geno -l metazoa_odb10"
     conda:
-        "config/assembly_qc.yml"
+        "bin/config/assembly_qc.yml"
     shell:
         "(busco -i {input} -o {output} -c {threads} {params}) 2> {log}"
 
@@ -46,7 +46,7 @@ rule assembly_kmer:
     log:
         "logs/{sample}_kmer.log"
     conda:
-        "bin/config/kmer_analysis.yml"
+        "bin/config/assembly_qc.yml"
     shell:
         "(merqury.sh {input.read_kmer} {input.assembly} {output}) 2> {log}"
 
