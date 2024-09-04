@@ -1,0 +1,84 @@
+configfile: "bin/config/config.yml"
+
+rule all:
+    input:
+        "tmpdir/read_kmer_db",
+        expand("busco_report/{sample}", sample=config["samples"]),
+        expand("inspector_report/{sample}", sample=config["samples"]),
+        expand("contaminant_screening_report/fcs_vec/{sample}", sample=config["samples"]),
+        expand("contaminant_screening_report/fcs_contam/{sample}", sample=config["samples"]),
+        expand("logs/{sample}_kmer.log", sample=config["samples"])
+
+rule read_kmer:
+    input:
+        reads=config["reads"]
+    output:
+        temp("tmpdir/read_kmer_db")
+    log:
+        "logs/read_kmer.log"
+    params:
+        "k=27 count"
+    conda:
+        "bin/config/assembly_qc.yml"
+    shell:
+        "(meryl output {output} {params} {input.reads}) 2> {log}"
+
+rule busco:
+    input:
+        "data/assemblies/{sample}.fa"
+    output:
+        "busco_report/{sample}"
+    log:
+        "logs/busco_{sample}.log"
+    threads: 30
+    params: "-m geno -l metazoa_odb10"
+    conda:
+        "config/assembly_qc.yml"
+    shell:
+        "(busco -i {input} -o {output} -c {threads} {params}) 2> {log}"
+
+rule assembly_kmer:
+    input:
+        assembly="data/assemblies/{sample}.fa",
+        read_kmer="tmpdir/read_kmer_db"
+    output:
+        "merqury_output/{sample}_report"
+    log:
+        "logs/{sample}_kmer.log"
+    conda:
+        "bin/config/kmer_analysis.yml"
+    shell:
+        "(merqury.sh {input.read_kmer} {input.assembly} {output}) 2> {log}"
+
+rule inspector:
+    input:
+    	assembly="data/assemblies/{sample}.fa",
+    	reads=config["reads"]
+    output:
+    	"inspector_report/{sample}"
+    log:
+    	"logs/inspector_{sample}.log"
+    threads: 30
+    params: "--datatype hifi"
+    conda:
+    	"bin/config/inspector.yml"
+    shell:
+    	"inspector.py -c {input.assembly} -r {input.reads} -o {output} -t {threads} {params}"
+
+
+rule contaminant_screening:
+    input:
+        assembly="data/assemblies/{sample}.fa"
+    output:
+        vec_dir="contaminant_screening_report/fcs_vec/{sample}",
+        contam_dir="contaminant_screening_report/fcs_contam/{sample}"
+    log:
+        "logs/contaminant_screening_{sample}.log"
+    params:
+        vec="--euk",
+        contam="screen genome --gx-db {config[gxdb]} --tax-id {config[taxid]}"
+    shell:
+        """
+        (bin/scripts/run_fcsadaptor.sh --fasta-input {input} --output-dir {output.vec_dir} {params.vec}) 2> {log}
+        (python3 bin/scripts/fcs.py {params.contam} --fasta {input} --out-dir {output.contam_dir}) 2>> {log}
+        """
