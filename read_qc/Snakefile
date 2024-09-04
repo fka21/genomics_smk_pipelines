@@ -1,0 +1,149 @@
+configfile: "bin/config/config.yml"
+
+rule all:
+    input:
+        expand("genomescope_report/{sample}", sample=[config['reads'].replace('.fa', '')]),
+        expand("kmer_histograms/{sample}_hetkmers.dump", sample=[config['reads'].replace('.fa', '')]),
+        expand("kmer_histograms/{sample}.png", sample=[config['reads'].replace('.fa', '')]),
+        expand("kat2_report/{sample}", sample=config['reads']),
+        expand("kraken2_report/krona_report/{sample}.html", sample=[config['reads'].replace('.fa', '')]),
+        expand("nanoplot_report/{sample}", sample=[config['reads'].replace('.fa', '')])
+
+rule fasta2fastq:
+    input:
+        reads=config['reads']
+    output:
+        reads="data/reads/{sample}.fq"
+    conda:
+        "bin/config/kmer.yml"
+    params: "-F '#'"
+    shell:
+        """
+        seqtk seq {params} {input.reads} > {output.reads}
+        """
+
+rule kmer_counter:
+    input:
+        reads="data/reads/{sample}.fq"
+    output:
+        output_dir=directory("kmer_counter/{sample}")
+    log:
+        "logs/kmer_counter_{sample}.log"
+    conda:
+        "bin/config/kmer.yml"
+    threads: 40
+    params:
+        "-k27 -m128"
+    shell:
+        """
+        kmc {params} -t {threads} {input.reads} {wildcards.sample} {output.output_dir}
+        """
+
+rule kmer2hist:
+    input:
+        "kmer_counter/{sample}"
+    output:
+        histo="kmer_histograms/{sample}.hist"
+    conda:
+        "bin/config/kmer.yml"
+    params:
+        operation1="transform",
+        operation2="histogram",
+        maxcov="-cx10000"
+    shell:
+        """
+        kmc_tools {params.operation1} {input} {params.operation2} {output.histo} {params.maxcov}
+        """
+
+rule smudgeplot:
+    input:
+        "kmer_histograms/{sample}.hist"
+    output:
+        dump="kmer_histograms/{sample}_hetkmers.dump",
+        smudgeplot_pdf="kmer_histograms/{sample}.png"
+    conda:
+        "bin/config/kmer.yml"
+    params:
+        kmer="-k 27",
+        output_pattern="{sample}"
+    shell:
+        """
+        L=$(smudgeplot.py cutoff {input} L)
+        U=$(smudgeplot.py cutoff {input} U)
+        kmc_tools transform {input} -ci"$L" -cx"$U" dump -s {output.dump}
+        smudgeplot.py hetkmers -o {output.dump} < {output.dump}
+        smudgeplot.py plot {params.kmer} -o {output.smudgeplot_pdf} {output.dump}
+        """
+
+rule genomescope:
+    input:
+        histo="kmer_histograms/{sample}.hist"
+    output:
+        directory("genomescope_report/{sample}")
+    log:
+        "logs/genomescope_{sample}.log"
+    conda:
+        "bin/config/kmer.yml"
+    shell:
+        """
+        genomescope.R -i {input.histo} -o {output}
+        """
+
+rule kat2:
+    input:
+        reads=config['reads']
+    output:
+        "kat2_report/{sample}"
+    log:
+        "logs/kat2_{sample}.log"
+    conda:
+        "bin/config/kat2.yml"
+    threads: 40
+    shell:
+        "kat gcp -t {threads} -o {output} {input}"
+
+rule contamination_evaluation:
+    input:
+        reads=config['reads']
+    output:
+        kraken2="kraken2_report/{sample}.output.txt",
+        kraken2_report="kraken2_report/{sample}.report.txt",
+        krona="kraken2_report/{sample}.krona_input.txt"
+    log:
+        "logs/kraken2_{sample}.log"
+    conda:
+        "bin/config/kraken2.yml"
+    threads: 40
+    shell:
+        """
+        kraken2 --db config['db'] --threads {threads} --output {output.kraken2} --report {output.kraken2_report} {input}
+        cut -f 2,3 {output.kraken2} > {output.krona}
+        """
+
+rule contamination_visualisation:
+    input:
+        "kraken2_report/{sample}.krona_input.txt"
+    output:
+        "kraken2_report/krona_report/{sample}.html"
+    log:
+        "logs/krona_{sample}.log"
+    conda:
+        "bin/config/kraken2.yml"
+    shell:
+        """
+        ktUpdateTaxonomy.sh
+        ktImportTaxonomy -o {output} {input}
+        """
+
+rule nanoplot:
+    input:
+        reads=config['reads']
+    output:
+        outdir=directory("nanoplot_report/{sample}")
+    conda:
+        "bin/config/nanoplot.yml"
+    threads: 40
+    params:
+        "--dpi 300 --format 'pdf'"
+    shell:
+        "NanoPlot --fasta {input} --outdir {output.outdir} --threads {threads} "
