@@ -27,7 +27,7 @@ rule busco:
     input:
         "data/assemblies/{sample}.fa"
     output:
-        "busco_report/{sample}"
+        directory("busco_report/{sample}")
     log:
         "logs/busco_{sample}.log"
     threads: 30
@@ -55,7 +55,7 @@ rule inspector:
     	assembly="data/assemblies/{sample}.fa",
     	reads=config["reads"]
     output:
-    	"inspector_report/{sample}"
+    	directory("inspector_report/{sample}")
     log:
     	"logs/inspector_{sample}.log"
     threads: 30
