@@ -1,6 +1,0 @@
-samples:
-    verkko: data/assemblies/verkko.fa
-    verkko_hic: data/assemblies/verkko_hic.fa
-reads: data/reads/smeds_concat.ccs.fa
-gxdb: bin/db/gxdb
-taxid: 79327
