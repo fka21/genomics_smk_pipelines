@@ -6,7 +6,7 @@ Various tools for evaluating PacBio HiFi reads, quality checking of contigs gene
 
 Generally all required conda environments are implemented in each pipeline and are installed during deploying the pipeline.
 
-The directoru structure is fixed and parts of it should be defined _a priori_(details in each pipeline can be found).
+The directory structure is fixed and parts of it should be defined _a priori_(details in each pipeline can be found).
 
 ## Usage
 
