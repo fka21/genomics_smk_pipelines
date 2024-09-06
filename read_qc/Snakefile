@@ -1,17 +1,21 @@
 configfile: "bin/config/config.yml"
 
+# Define sample names from the file structure
+sample = glob_wildcards("data/reads/{fname}.fa").fname
+
+
 rule all:
     input:
-        expand("genomescope_report/{sample}", sample=[config['reads'].replace('.fa', '')]),
-        expand("kmer_histograms/{sample}_hetkmers.dump", sample=[config['reads'].replace('.fa', '')]),
-        expand("kmer_histograms/{sample}.png", sample=[config['reads'].replace('.fa', '')]),
-        expand("kat2_report/{sample}", sample=config['reads']),
-        expand("kraken2_report/krona_report/{sample}.html", sample=[config['reads'].replace('.fa', '')]),
-        expand("nanoplot_report/{sample}", sample=[config['reads'].replace('.fa', '')])
+        expand("genomescope_report/{sample}", sample=sample),
+        expand("kmer_histograms/{sample}_hetkmers.dump", sample=sample),
+        expand("kmer_histograms/{sample}_summary_table.tsv", sample=sample),
+        expand("kat2_report/{sample}.mx.png", sample=sample),
+        expand("kraken2_report/krona_report/{sample}.html", sample=sample),
+        expand("nanoplot_report/{sample}", sample=sample)
 
 rule fasta2fastq:
     input:
-        reads=config['reads']
+        reads="data/reads/{sample}.fa"
     output:
         reads="data/reads/{sample}.fq"
     conda:
@@ -33,10 +37,13 @@ rule kmer_counter:
         "bin/config/kmer.yml"
     threads: 40
     params:
-        "-k27 -m128"
+        args="-k27 -m128",
+        tmp=temp("tmpdir_kmer")
     shell:
         """
-        kmc {params} -t {threads} {input.reads} {wildcards.sample} {output.output_dir}
+        mkdir -p {output.output_dir} && cd {output.output_dir}
+        mkdir -p {params.tmp}
+        kmc {params.args} -t{threads} ../../{input.reads} {wildcards.sample} {params.tmp}
         """
 
 rule kmer2hist:
@@ -52,27 +59,28 @@ rule kmer2hist:
         maxcov="-cx10000"
     shell:
         """
-        kmc_tools {params.operation1} {input} {params.operation2} {output.histo} {params.maxcov}
+        kmc_tools {params.operation1} {input}/{sample} {params.operation2} {output.histo} {params.maxcov}
         """
 
 rule smudgeplot:
     input:
-        "kmer_histograms/{sample}.hist"
+        hist="kmer_histograms/{sample}.hist",
+        kmerdb="kmer_counter/{sample}"
     output:
-        dump="kmer_histograms/{sample}_hetkmers.dump",
-        smudgeplot_pdf="kmer_histograms/{sample}.png"
+        dump="kmer_histograms/{sample}_hetkmers.dump"
     conda:
         "bin/config/kmer.yml"
     params:
         kmer="-k 27",
-        output_pattern="{sample}"
+        output_pattern="{sample}",
+        output_dir="kmer_histograms/{sample}"
     shell:
         """
-        L=$(smudgeplot.py cutoff {input} L)
-        U=$(smudgeplot.py cutoff {input} U)
-        kmc_tools transform {input} -ci"$L" -cx"$U" dump -s {output.dump}
+        L=$(smudgeplot.py cutoff {input.hist} L)
+        U=$(smudgeplot.py cutoff {input.hist} U)
+        kmc_tools transform {input.kmerdb}/{sample} -ci"$L" -cx"$U" dump -s {output.dump}
         smudgeplot.py hetkmers -o {output.dump} < {output.dump}
-        smudgeplot.py plot {params.kmer} -o {output.smudgeplot_pdf} {output.dump}
+        smudgeplot.py plot {params.kmer} -o {params.output_dir} {output.dump}_coverages.tsv
         """
 
 rule genomescope:
@@ -91,20 +99,24 @@ rule genomescope:
 
 rule kat2:
     input:
-        reads=config['reads']
+        reads="data/reads/{sample}.fa"
     output:
-        "kat2_report/{sample}"
+        "kat2_report/{sample}.mx.png"
     log:
         "logs/kat2_{sample}.log"
     conda:
         "bin/config/kat2.yml"
     threads: 40
     shell:
-        "kat gcp -t {threads} -o {output} {input}"
+        """
+        kat gcp -t {threads} -o kat2_report/{wildcards.sample} {input}
+        """
+
+
 
 rule contamination_evaluation:
     input:
-        reads=config['reads']
+        reads="data/reads/{sample}.fa"
     output:
         kraken2="kraken2_report/{sample}.output.txt",
         kraken2_report="kraken2_report/{sample}.report.txt",
@@ -113,10 +125,12 @@ rule contamination_evaluation:
         "logs/kraken2_{sample}.log"
     conda:
         "bin/config/kraken2.yml"
+    params:
+        db=config['db']
     threads: 40
     shell:
         """
-        kraken2 --db config['db'] --threads {threads} --output {output.kraken2} --report {output.kraken2_report} {input}
+        kraken2 --db {params.db} --threads {threads} --output {output.kraken2} --report {output.kraken2_report} {input}
         cut -f 2,3 {output.kraken2} > {output.krona}
         """
 
@@ -137,7 +151,7 @@ rule contamination_visualisation:
 
 rule nanoplot:
     input:
-        reads=config['reads']
+        reads="data/reads/{sample}.fa"
     output:
         outdir=directory("nanoplot_report/{sample}")
     conda:
@@ -146,4 +160,6 @@ rule nanoplot:
     params:
         "--dpi 300 --format 'pdf'"
     shell:
-        "NanoPlot --fasta {input} --outdir {output.outdir} --threads {threads} "
+        """
+        NanoPlot --fasta {input} --outdir {output.outdir} --threads {threads}
+        """
