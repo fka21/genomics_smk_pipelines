@@ -1,21 +1,45 @@
 configfile: "bin/config/config.yml"
 
+# Automatically detect sample names from assemblies
+assemblies = glob_wildcards("data/assemblies/{sample}.fa").sample
+
+# Read configuration values
+taxid = config['taxid']
+gxdb = config['gxdb']
+
+# Rule all - collects all targets
 rule all:
     input:
-        "tmpdir/read_kmer_db",
-        expand("busco_report/{sample}", sample=config["samples"]),
-        expand("inspector_report/{sample}", sample=config["samples"]),
-        expand("contaminant_screening_report/fcs_vec/{sample}", sample=config["samples"]),
-        expand("contaminant_screening_report/fcs_contam/{sample}", sample=config["samples"]),
-        expand("logs/{sample}_kmer.log", sample=config["samples"])
+        "tmpdir/reads_kmer_db",
+        "data/reads/reads.fq",
+        expand("inspector_report/{sample}", sample=assemblies),
+        expand("contaminant_screening_report/fcs_vec/{sample}/fcs_adaptor_report.txt", sample=assemblies),
+        expand("contaminant_screening_report/fcs_contam/{sample}", sample=assemblies),
+        expand("kmer_report/{sample}.spectra-asm.fl.png", sample=assemblies),
+        expand("busco_report/{sample}", sample=assemblies)
 
+# Rule fasta2fastq - convert .fa reads to .fq format
+rule fasta2fastq:
+    input:
+        reads=config['reads'] 
+    output:
+        reads="data/reads/reads.fq"  
+    conda:
+        "bin/config/assembly_qc.yml"
+    params: "-F '#'"
+    shell:
+        """
+        seqtk seq {params} {input.reads} > {output.reads}
+        """
+
+# Rule read_kmer - process reads for kmer counting
 rule read_kmer:
     input:
-        reads=config["reads"]
+        reads="data/reads/reads.fq"  # Hardcoded input
     output:
-        temp("tmpdir/read_kmer_db")
+        directory("tmpdir/reads_kmer_db")
     log:
-        "logs/read_kmer.log"
+        "logs/read_kmer_reads.log"
     params:
         "k=27 count"
     conda:
@@ -23,62 +47,68 @@ rule read_kmer:
     shell:
         "(meryl output {output} {params} {input.reads}) 2> {log}"
 
+# Rule busco - run BUSCO on assemblies
 rule busco:
     input:
-        "data/assemblies/{sample}.fa"
+        "data/assemblies/{assemblies}.fa"
     output:
-        directory("busco_report/{sample}")
+        directory("busco_report/{assemblies}")
     log:
-        "logs/busco_{sample}.log"
+        "logs/busco_{assemblies}.log"
     threads: 30
-    params: "-m geno -l metazoa_odb10"
+    params: "-m geno -l busco_downloads/lineages/metazoa_odb10"
     conda:
         "bin/config/assembly_qc.yml"
     shell:
         "(busco -i {input} -o {output} -c {threads} {params}) 2> {log}"
 
+# Rule assembly_kmer - compare read kmer with assembly
 rule assembly_kmer:
     input:
-        assembly="data/assemblies/{sample}.fa",
-        read_kmer="tmpdir/read_kmer_db"
+        assembly="data/assemblies/{assemblies}.fa",
+        read_db="tmpdir/reads_kmer_db"
     output:
-        "merqury_output/{sample}_report"
-    log:
-        "logs/{sample}_kmer.log"
+        "kmer_report/{assemblies}.spectra-asm.fl.png"
     conda:
         "bin/config/assembly_qc.yml"
     shell:
-        "(merqury.sh {input.read_kmer} {input.assembly} {output}) 2> {log}"
+        """
+        mkdir -p kmer_report && cd kmer_report
+        merqury.sh ../{input.read_db} ../{input.assembly} {wildcards.assemblies}
+        """
 
+# Rule inspector - perform inspector analysis on reads and assembly
 rule inspector:
     input:
-    	assembly="data/assemblies/{sample}.fa",
-    	reads=config["reads"]
+        assembly="data/assemblies/{assemblies}.fa",
+        reads="data/reads/reads.fq"  # Hardcoded input
     output:
-    	directory("inspector_report/{sample}")
+        directory("inspector_report/{assemblies}")
     log:
-    	"logs/inspector_{sample}.log"
+        "logs/inspector_{assemblies}.log"
     threads: 30
-    params: "--datatype hifi"
+    params:
+        dtype="--datatype hifi"
     conda:
-    	"bin/config/inspector.yml"
+        "bin/config/inspector.yml"
     shell:
-    	"inspector.py -c {input.assembly} -r {input.reads} -o {output} -t {threads} {params}"
+        "inspector.py -c {input.assembly} -r {input.reads} -o {output} -t {threads} {params.dtype}"
 
-
+# Rule contaminant_screening - run contaminant and vector screening
 rule contaminant_screening:
     input:
-        assembly="data/assemblies/{sample}.fa"
+        assembly="data/assemblies/{assemblies}.fa"
     output:
-        vec_dir="contaminant_screening_report/fcs_vec/{sample}",
-        contam_dir="contaminant_screening_report/fcs_contam/{sample}"
+        fcs_vec="contaminant_screening_report/fcs_vec/{assemblies}/fcs_adaptor_report.txt",
+        fcs_contam=directory("contaminant_screening_report/fcs_contam/{assemblies}/")
     log:
-        "logs/contaminant_screening_{sample}.log"
+        "logs/contaminant_screening_{assemblies}.log"
     params:
-        vec="--euk",
-        contam="screen genome --gx-db {config[gxdb]} --tax-id {config[taxid]}"
+        working_dir="./",
+        taxid=taxid,  # Directly use the configuration value
+        tools="bin/scripts/",
+        db=gxdb  # Directly use the configuration value
     shell:
         """
-        (bin/scripts/run_fcsadaptor.sh --fasta-input {input} --output-dir {output.vec_dir} {params.vec}) 2> {log}
-        (python3 bin/scripts/fcs.py {params.contam} --fasta {input} --out-dir {output.contam_dir}) 2>> {log}
+        bash bin/scripts/contaminant_screening.sh {params.working_dir} {wildcards.assemblies} {params.taxid} {params.tools} {params.db} 2> {log}
         """
