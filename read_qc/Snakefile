@@ -67,7 +67,8 @@ rule smudgeplot:
         hist="kmer_histograms/{sample}.hist",
         kmerdb="kmer_counter/{sample}"
     output:
-        dump="kmer_histograms/{sample}_hetkmers.dump"
+        dump="kmer_histograms/{sample}_hetkmers.dump",
+        sumtbl="kmer_histograms/{sample}_summary_table.tsv"
     conda:
         "bin/config/kmer.yml"
     params:
