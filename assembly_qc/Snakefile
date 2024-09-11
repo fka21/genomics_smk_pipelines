@@ -1,3 +1,14 @@
+import os
+
+############################
+###                      ###
+### Setting up variables ###
+###                      ###
+############################
+
+# Detect the first directory in the busco_downloads/lineages/ folder
+lineage_dir = sorted(os.listdir("busco_downloads/lineages/"))[0]
+
 configfile: "bin/config/config.yml"
 
 # Automatically detect sample names from assemblies
@@ -7,16 +18,29 @@ assemblies = glob_wildcards("data/assemblies/{sample}.fa").sample
 taxid = config['taxid']
 gxdb = config['gxdb']
 
+
+#################################################
+###                                           ###
+### Main rule to collect output from the rest ###
+###                                           ###
+#################################################
+
 # Rule all - collects all targets
 rule all:
     input:
         "tmpdir/reads_kmer_db",
         "data/reads/reads.fq",
+        "contaminant_screening_done.flag",
         expand("inspector_report/{sample}", sample=assemblies),
-        expand("contaminant_screening_report/fcs_vec/{sample}/fcs_adaptor_report.txt", sample=assemblies),
-        expand("contaminant_screening_report/fcs_contam/{sample}", sample=assemblies),
         expand("kmer_report/{sample}.spectra-asm.fl.png", sample=assemblies),
         expand("busco_report/{sample}", sample=assemblies)
+
+
+########################
+###                  ###
+### Individual rules ###
+###                  ###
+########################
 
 # Rule fasta2fastq - convert .fa reads to .fq format
 rule fasta2fastq:
@@ -35,7 +59,7 @@ rule fasta2fastq:
 # Rule read_kmer - process reads for kmer counting
 rule read_kmer:
     input:
-        reads="data/reads/reads.fq"  # Hardcoded input
+        reads="data/reads/reads.fq"
     output:
         directory("tmpdir/reads_kmer_db")
     log:
@@ -81,7 +105,7 @@ rule assembly_kmer:
 rule inspector:
     input:
         assembly="data/assemblies/{assemblies}.fa",
-        reads="data/reads/reads.fq"  # Hardcoded input
+        reads="data/reads/reads.fq"  
     output:
         directory("inspector_report/{assemblies}")
     log:
@@ -94,21 +118,20 @@ rule inspector:
     shell:
         "inspector.py -c {input.assembly} -r {input.reads} -o {output} -t {threads} {params.dtype}"
 
-# Rule contaminant_screening - run contaminant and vector screening
+# Rule contaminant_screening - run contaminant and vector screening for all assemblies
 rule contaminant_screening:
     input:
-        assembly="data/assemblies/{assemblies}.fa"
+        assemblies=expand("data/assemblies/{sample}.fa", sample=assemblies)
     output:
-        fcs_vec="contaminant_screening_report/fcs_vec/{assemblies}/fcs_adaptor_report.txt",
-        fcs_contam=directory("contaminant_screening_report/fcs_contam/{assemblies}/")
+        "contaminant_screening_done.flag"  # Use a flag file to indicate completion
     log:
-        "logs/contaminant_screening_{assemblies}.log"
+        "logs/contaminant_screening.log"
     params:
         working_dir="./",
-        taxid=taxid,  # Directly use the configuration value
+        taxid=taxid,
         tools="bin/scripts/",
-        db=gxdb  # Directly use the configuration value
+        db=gxdb
     shell:
         """
-        bash bin/scripts/contaminant_screening.sh {params.working_dir} {wildcards.assemblies} {params.taxid} {params.tools} {params.db} 2> {log}
+        bash bin/scripts/contaminant_screening.sh {params.working_dir} "{input.assemblies}" {params.taxid} {params.tools} {params.db} 2> {log}
         """
