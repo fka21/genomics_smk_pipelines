@@ -2,6 +2,8 @@
 
 A pipeline used to evaluate _de novo_ genome assemblies. Theoretically can be used on both contigs and scaffolds. It amalgamates reports from several independent evaluation methods. It is tailored towards the evaluation of assemblies generated using solely PacBio HiFi data.
 
+![alt text](https://github.com/fka21/genome_assembly_smk_pipelines/blob/main/assembly_qc/dag.svg)
+
 Metrics evaluated:
 * Genome gene complement completeness by utilizing [BUSCO](https://busco.ezlab.org/)
 * Genome k-mer completeness by utilizing [merqury](https://github.com/marbl/merqury)
