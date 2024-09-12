@@ -53,3 +53,6 @@ snakemake --cores [user-defined] --use-conda all
 ## Output
 
 The runs from different evaluation methods are grouped in `[method]_report/` directories. Within each directory multiple directories are found for each input assembly.
+
+> [!NOTE]
+> The `inspector_report/` outputs can be utilized to further correct  for local misassemblies. Please consult [inspector](https://github.com/Maggi-Chen/Inspector) documentation for further information.
