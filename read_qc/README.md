@@ -2,6 +2,8 @@
 
 A pipeline is used to evaluate PacBio HiFi reads before feeding them into an assembler. It amalgamates reports from several independent evaluation methods.
 
+![alt text](https://github.com/fka21/genome_assembly_smk_pipelines/blob/main/read_qc/dag.svg)
+
 Metrics evaluated:
 * Basic read stats of the reads using [NanoPlot](https://github.com/wdecoster/NanoPlot)
 * Contamination evaluation with [kraken2](https://github.com/DerrickWood/kraken2) and visualization with [krona](https://github.com/marbl/Krona), [kat](https://github.com/TGAC/KAT)
