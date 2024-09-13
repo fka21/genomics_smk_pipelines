@@ -2,7 +2,7 @@
 
 A pipeline used to scaffold contigs using HiC data. It uses [bwa](https://github.com/lh3/bwa) for aligning HiC reads to the contigs, performs some post-alignment steps (see image below) and using [YAHS](https://github.com/c-zhou/yahs) it performs the scaffolding step. It also does some QC steps post-scaffolding.
 
-![](scaffolding/dag.svg)
+![](https://github.com/fka21/genome_assembly_smk_pipelines/blob/main/scaffolding/dag.svg)
 
 Metrics evaluated:
 * Using [PretextView](https://github.com/sanger-tol/PretextView) a snapshot of HiC interactions is done.
