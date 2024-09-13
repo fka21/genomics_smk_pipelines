@@ -1,0 +1,234 @@
+import glob
+from pathlib import Path
+
+# Automatically detect assemblies and reads
+assemblies = glob_wildcards("data/assemblies/{sample}.fa").sample
+reads_R1 = "data/reads/reads_R1.fastq"
+reads_R2 = "data/reads/reads_R2.fastq"
+
+rule all:
+    input:
+        expand("04_hic_qc/{sample}/hic_qc_results.txt", sample=assemblies),
+        expand("02_scaffolding/{sample}_scaffolds_final.fa", sample=assemblies),
+        expand("03_realignments/{sample}_scaffolds_merged.bam", sample=assemblies),
+        expand("05_pretext/{sample}.pretext", sample=assemblies),
+        expand("05_pretext/{sample}FullMap.png", sample=assemblies),
+        "cleanup.flag"
+
+# Rule to index assemblies for alignment
+rule bwa_index:
+    input:
+        "data/assemblies/{sample}.fa"
+    output:
+        "data/assemblies/{sample}.fa.bwt.2bit.64"
+    log:
+        "logs/{sample}_bwa_index.log"
+    conda:
+        "bin/config/scaffolding.yml"
+    shell:
+        "bwa-mem2 index {input} > {log} 2>&1"
+
+# Rule to index assemblies for scaffolding
+rule samtools_index:
+    input:
+        "data/assemblies/{sample}.fa"
+    output:
+        "data/assemblies/{sample}.fa.fai"
+    log:
+        "logs/{sample}_samtools_index.log"
+    conda:
+        "bin/config/scaffolding.yml"
+    shell:
+        "samtools faidx {input} > {log} 2>&1"
+
+# Rule for alignment and BAM sorting for R1 and R2 reads
+rule align_sort_bam:
+    input:
+        assembly="data/assemblies/{sample}.fa",
+        reads1=reads_R1,
+        reads2=reads_R2,
+        index="data/assemblies/{sample}.fa.bwt.2bit.64"
+    output:
+        bam1="01_alignments/{sample}_R1.bam",
+        bam2="01_alignments/{sample}_R2.bam"
+    threads: 30
+    log:
+        "logs/{sample}_align_sort_bam.log"
+    conda:
+        "bin/config/scaffolding.yml"
+    shell:
+        """
+        bwa-mem2 mem -5 -S -P -t {threads} {input.assembly} {input.reads1} | samtools sort -@ {threads} -n -O bam -o {output.bam1}
+        bwa-mem2 mem -5 -S -P -t {threads} {input.assembly} {input.reads2} | samtools sort -@ {threads} -n -O bam -o {output.bam2}
+        > {log} 2>&1
+        """
+
+# Rule to merge BAM files
+rule merge_bam:
+    input:
+        bam1="01_alignments/{sample}_R1.bam",
+        bam2="01_alignments/{sample}_R2.bam"
+    output:
+        merged_bam="01_alignments/{sample}_merged.bam"
+    threads: 50
+    log:
+        "logs/{sample}_merge_bam.log"
+    conda:
+        "bin/config/scaffolding.yml"
+    shell:
+        """
+        bellerophon --forward {input.bam1} --reverse {input.bam2} --quality 20 --output {output.merged_bam} --threads {threads}
+        > {log} 2>&1
+        """
+
+# Rule to mark duplicates using Picard
+rule mark_duplicates:
+    input:
+        "01_alignments/{sample}_merged.bam"
+    output:
+        marked_bam="01_alignments/{sample}_marked.bam",
+        metrics="01_alignments/{sample}_dup_metrics.txt"
+    log:
+        "logs/{sample}_mark_duplicates.log"
+    conda:
+        "bin/config/scaffolding.yml"
+    shell:
+        """
+        java -jar $CONDA_PREFIX/share/picard-2.20.4-1/picard.jar SortSam I={input} O=01_alignments/temp_sorted.bam SORT_ORDER=queryname
+        java -jar $CONDA_PREFIX/share/picard-2.20.4-1/picard.jar MarkDuplicates I=01_alignments/temp_sorted.bam O={output.marked_bam} M={output.metrics}
+        > {log} 2>&1
+        """
+
+# Rule to scaffold the assembly using YAHS
+rule scaffold:
+    input:
+        assembly="data/assemblies/{sample}.fa",
+        marked_bam="01_alignments/{sample}_marked.bam",
+        assembly_idx="data/assemblies/{sample}.fa.fai"
+    output:
+        scaffold="02_scaffolding/{sample}_scaffolds_final.fa"
+    log:
+        "logs/{sample}_scaffold.log"
+    conda:
+        "bin/config/scaffolding.yml"
+    params:
+        restriction_site="-e 'GATC,GANTC,CTNAG,TTAA'",
+        prefix="02_scaffolding/{sample}"
+    shell:
+        """
+        yahs {input.assembly} {input.marked_bam} {params.restriction_site} -o {params.prefix}
+        agp_to_fasta 02_scaffolding/{wildcards.sample}_scaffolds_final.agp {input.assembly} > {output.scaffold}
+        > {log} 2>&1
+        """
+
+# Rule to realign reads to scaffolds
+rule realign_to_scaffolds:
+    input:
+        scaffolded_assembly="02_scaffolding/{sample}_scaffolds_final.fa",
+        reads1=reads_R1,
+        reads2=reads_R2
+    output:
+        bam1="03_realignments/{sample}_scaffolds_R1.bam",
+        bam2="03_realignments/{sample}_scaffolds_R2.bam"
+    threads: 30
+    log:
+        "logs/{sample}_realign_to_scaffolds.log"
+    conda:
+        "bin/config/scaffolding.yml"
+    shell:
+        """
+        bwa-mem2 index {input}
+        bwa-mem2 mem -5 -S -P -t {threads} {input.scaffolded_assembly} {input.reads1} | samtools sort -@ {threads} -n -O bam -o {output.bam1}
+        bwa-mem2 mem -5 -S -P -t {threads} {input.scaffolded_assembly} {input.reads2} | samtools sort -@ {threads} -n -O bam -o {output.bam2}
+        > {log} 2>&1
+        """
+
+# Rule to merge realigned BAM files
+rule merge_realigned_bam:
+    input:
+        bam1="03_realignments/{sample}_scaffolds_R1.bam",
+        bam2="03_realignments/{sample}_scaffolds_R2.bam"
+    output:
+        merged_bam="03_realignments/{sample}_scaffolds_merged.bam"
+    threads: 50
+    log:
+        "logs/{sample}_merge_realigned_bam.log"
+    conda:
+        "bin/config/scaffolding.yml"
+    shell:
+        """
+        bellerophon --forward {input.bam1} --reverse {input.bam2} --quality 20 --output {output.merged_bam} --threads {threads}
+        > {log} 2>&1
+        """
+
+# Pretext steps:
+# Rule to generate PretextMap from realigned BAM
+rule pretext_map:
+    input:
+        bam="03_realignments/{sample}_scaffolds_merged.bam"
+    output:
+        "05_pretext/{sample}.pretext"
+    log:
+        "logs/{sample}_pretext_map.log"
+    conda:
+        "bin/config/scaffolding.yml"
+    shell:
+        """
+        samtools view -h {input.bam} | PretextMap -o {output}
+        > {log} 2>&1
+        """
+
+# Rule to generate PretextSnapshot
+rule pretext_snapshot:
+    input:
+        "05_pretext/{sample}.pretext"
+    output:
+        "05_pretext/{sample}FullMap.png"
+    log:
+        "logs/{sample}_pretext_snapshot.log"
+    conda:
+        "bin/config/scaffolding.yml"
+    shell:
+        """
+        PretextSnapshot -m {input} -f png -r 1000 -c 5 --sequences '=full' --minTexels 64 --gridSize 1 --gridColour black '' -o output --prefix {wildcards.sample}
+        mv output/{wildcards.sample}FullMap.png {output}
+        rm -rf output
+        > {log} 2>&1
+        """
+
+# Rule for HiC quality control
+rule hic_qc:
+    input:
+        marked_bam="01_alignments/{sample}_marked.bam"
+    output:
+        "04_hic_qc/{sample}/hic_qc_results.txt"
+    conda:
+        "bin/config/hic_qc.yml"
+    shell:
+        """
+        mkdir -p 04_hic_qc/{wildcards.sample} && cd 04_hic_qc/{wildcards.sample}
+        samtools sort -o ../../04_hic_qc/{wildcards.sample}/sorted.bam -n -@ 20 ../../{input.marked_bam}
+        hic_qc.py -b ../../04_hic_qc/{wildcards.sample}/sorted.bam > ../../{output}
+        rm ../../04_hic_qc/{wildcards.sample}/sorted.bam
+        """
+
+# Rule to cleanup unused BAM files
+rule cleanup:
+    input:
+        expand("01_alignments/{sample}_R1.bam", sample=assemblies),
+        expand("01_alignments/{sample}_R2.bam", sample=assemblies),
+        expand("01_alignments/{sample}_merged.bam", sample=assemblies),
+        expand("03_realignments/{sample}_scaffolds_R1.bam", sample=assemblies),
+        expand("03_realignments/{sample}_scaffolds_R2.bam", sample=assemblies),
+        expand("03_realignments/{sample}_scaffolds_merged.bam", sample=assemblies)
+    output:
+        "cleanup.flag"
+    shell:
+        """
+        # Remove unused BAM files
+        find 01_alignments -name '*.bam' ! -name '*_marked.bam' -delete
+        find 03_realignments -name '*.bam' ! -name '*_scaffolds_merged.bam' -delete
+        
+        # Touch the flag file to indicate cleanup is done
+        touch {output}
+        """
