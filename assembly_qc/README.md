@@ -2,7 +2,7 @@
 
 A pipeline used to evaluate _de novo_ genome assemblies. Theoretically can be used on both contigs and scaffolds. It amalgamates reports from several independent evaluation methods. It is tailored towards the evaluation of assemblies generated using solely PacBio HiFi data.
 
-![alt text](https://github.com/fka21/genome_assembly_smk_pipelines/blob/main/assembly_qc/dag.svg)
+![](assembly_qc/dag.svg)
 
 Metrics evaluated:
 * Genome gene complement completeness by utilizing [BUSCO](https://busco.ezlab.org/)
@@ -10,7 +10,8 @@ Metrics evaluated:
 * Genome correctness based on read evidence by utilizing [inspector](https://github.com/Maggi-Chen/Inspector)
 * Genome contamination levels by utilizing NCBI's Foreign Contamination Screening ([fcs](https://github.com/ncbi/fcs))
 
-> [!NOTE]  
+> **NOTE**  
+> 
 > For the different tools I used the parameters I deemed appropriate for my own analyses. To customize the pipeline towards specific needs, please inqure the documentation of the desired tool and adjust the `Snakefile` accordingly.
 ## Prerequisites
 
@@ -30,7 +31,8 @@ python3 fcs.py db get --mft "$SOURCE_DB_MANIFEST" --dir "$LOCAL_DB/test-only"
 
 The BUSCO lineage should be *a priori* downloaded and be present in the working directory of the Snakefile with `busco_downloads/lineages/[user_determined_lineage]`.
 
-> [!CAUTION]
+> **CAUTION**
+> 
 > The pipeline will only choose the first directory if multiple BUSCO lineage directories exist within the path.
 
 One can access lineages with the following commands.
@@ -54,5 +56,9 @@ snakemake --cores [user-defined] --use-conda all
 
 The runs from different evaluation methods are grouped in `[method]_report/` directories. Within each directory multiple directories are found for each input assembly.
 
-> [!NOTE]
+> **NOTE**
+> 
 > The `inspector_report/` outputs can be utilized to further correct  for local misassemblies. Please consult [inspector](https://github.com/Maggi-Chen/Inspector) documentation for further information.
+
+
+

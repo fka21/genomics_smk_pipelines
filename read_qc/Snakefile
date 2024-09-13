@@ -9,7 +9,6 @@ rule all:
         expand("genomescope_report/{sample}", sample=sample),
         expand("kmer_histograms/{sample}_hetkmers.dump", sample=sample),
         expand("kmer_histograms/{sample}_summary_table.tsv", sample=sample),
-        expand("kat2_report/{sample}.mx.png", sample=sample),
         expand("kraken2_report/krona_report/{sample}.html", sample=sample),
         expand("nanoplot_report/{sample}", sample=sample)
 
@@ -95,24 +94,11 @@ rule genomescope:
         "bin/config/kmer.yml"
     shell:
         """
+        cd bin/workflow/scripts/genomescope2.0/
+        Rscript install.R
+        cd ../../../../
         genomescope.R -i {input.histo} -o {output}
         """
-
-rule kat2:
-    input:
-        reads="data/reads/{sample}.fa"
-    output:
-        "kat2_report/{sample}.mx.png"
-    log:
-        "logs/kat2_{sample}.log"
-    conda:
-        "bin/config/kat2.yml"
-    threads: 40
-    shell:
-        """
-        kat gcp -t {threads} -o kat2_report/{wildcards.sample} {input}
-        """
-
 
 
 rule contamination_evaluation:

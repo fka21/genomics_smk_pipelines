@@ -2,7 +2,7 @@
 
 A pipeline is used to evaluate PacBio HiFi reads before feeding them into an assembler. It amalgamates reports from several independent evaluation methods.
 
-![alt text](https://github.com/fka21/genome_assembly_smk_pipelines/blob/main/read_qc/dag.svg)
+![](read_qc/dag.svg)
 
 Metrics evaluated:
 * Basic read stats of the reads using [NanoPlot](https://github.com/wdecoster/NanoPlot)
@@ -11,7 +11,8 @@ Metrics evaluated:
 * K-mer profile analysis with [genomescope2.0](https://github.com/tbenavi1/genomescope2.0), and [smudgeplot](https://github.com/KamilSJaron/smudgeplot)
   
 
-> [!NOTE]  
+> **NOTE**
+>  
 > For the different tools I used the parameters I deemed appropriate for my own analyses. To customize the pipeline towards specific needs, please inquire the documentation of the desired tool and adjust the `Snakefile` accordingly.
 ## Prerequisites
 

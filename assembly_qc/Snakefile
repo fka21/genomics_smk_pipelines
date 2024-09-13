@@ -80,7 +80,7 @@ rule busco:
     log:
         "logs/busco_{assemblies}.log"
     threads: 30
-    params: "-m geno -l busco_downloads/lineages/" + lineage_dir
+    params: "-m geno -l busco_downloads/lineages/metazoa_odb10"
     conda:
         "bin/config/assembly_qc.yml"
     shell:

@@ -1,1 +1,2 @@
+reads: data/reads/smeds_concat.ccs.fa
 db: bin/db/kraken_plan/
