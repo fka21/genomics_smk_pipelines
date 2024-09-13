@@ -2,7 +2,7 @@
 
 A pipeline is used to evaluate PacBio HiFi reads before feeding them into an assembler. It amalgamates reports from several independent evaluation methods.
 
-![](read_qc/dag.svg)
+![](https://github.com/fka21/genome_assembly_smk_pipelines/blob/main/read_qc/dag.svg)
 
 Metrics evaluated:
 * Basic read stats of the reads using [NanoPlot](https://github.com/wdecoster/NanoPlot)
