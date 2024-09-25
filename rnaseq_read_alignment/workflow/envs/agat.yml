@@ -1,7 +1,0 @@
-name: agat
-channels:
-  - bioconda
-  - conda-forge
-  - defaults
-dependencies:
-  - agat
