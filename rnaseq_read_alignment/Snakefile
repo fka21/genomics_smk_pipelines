@@ -1,0 +1,344 @@
+#####################################################################################
+###
+### Pipeline used to process raw RNAseq reads and align them to a genome of choice. 
+###
+######################################################################################
+
+# Load configuration file
+configfile: "config/config.yml"
+
+# Detect automatically paired-end read samples
+sample_names, = glob_wildcards("workflow/resources/reads/{sample}" + config["PE_ext"].format(pair="1"))
+
+#########################
+###                   ###
+### Collect all rules ###
+###                   ###
+#########################
+
+rule all:
+    input:
+        expand("01_trim/{sample}_R1_trim.fastq.gz", sample=sample_names),
+        expand("02_rrna_filtered/{sample}_fwd.fq.gz", sample=sample_names),
+        expand("02_rrna_filtered/{sample}_rev.fq.gz", sample=sample_names),
+        "00_qc/multiqc.html",
+        "04_star/done_all_STAR",
+        "05_featurecounts/counts.txt"
+
+
+######################
+###                ###
+### Setting up run ###
+###                ###
+######################
+
+rule symlink_dbs:
+    output:
+        kraken2 = directory("tmp/kraken2"),
+        rrna = "tmp/rrna_db.fa"
+    params: 
+        kraken2 = config["kraken2_db"],
+        rrna = config["rrna_db"]
+    shell:
+        """
+        ln -sf {params.kraken2} {output.kraken2}
+        ln -sf {params.rrna} {output.rrna}
+        """
+
+rule sortmerna_install:
+    input:
+        "tmp/rrna_db.fa"
+    output:
+        script = "workflow/scripts/bin/sortmerna"
+    shell:
+        """
+        wget https://github.com/biocore/sortmerna/releases/download/v4.3.6/sortmerna-4.3.6-Linux.sh -P workflow/scripts
+        cd workflow/scripts
+        bash sortmerna-4.3.6-Linux.sh --skip-license
+        rm sortmerna-4.3.6-Linux.sh
+        """
+
+
+###########################
+###                     ###
+### Quality check steps ###
+###                     ###
+###########################
+
+
+rule trim:
+    input:
+       r1 = "workflow/resources/reads/{sample}" + config["PE_ext"].format(pair="1"),
+       r2 = "workflow/resources/reads/{sample}" + config["PE_ext"].format(pair="2") 
+    output:
+       r1 = "01_trim/{sample}_R1_trim.fastq.gz",
+       r2 = "01_trim/{sample}_R2_trim.fastq.gz"
+    log:
+       "logs/{sample}_fastp.log"
+    params:
+        output_dir = "02_trim/",
+        quality = 30,
+        window = 5
+    conda:
+       "workflow/envs/fastp.yml"
+    threads:
+        config["threads"]
+    shell:
+        """
+        fastp \
+        -i {input.r1} \
+        -I {input.r2} \
+        -o {output.r1} \
+        -O {output.r2} \
+        -q {params.quality} \
+        -5 \
+        --cut_front_window_size {params.window} \
+        --cut_front_mean_quality {params.quality} \
+        -r \
+        --cut_right_window_size {params.window} \
+        --cut_right_mean_quality {params.quality} \
+        --correction \
+        --low_complexity_filter \
+        --detect_adapter_for_pe \
+        -w {threads} \
+        > {log} 2>&1
+        """
+
+rule fastqc_post_trim:
+   input:
+       r1 = "01_trim/{sample}_R1_trim.fastq.gz",
+       r2 = "01_trim/{sample}_R2_trim.fastq.gz"
+   output:
+       touch("00_qc/{sample}_post_trim.done")
+   log:
+       "logs/{sample}_fastqc_post_trim.log"
+   params:
+       prefix = "00_qc"
+   threads:
+       config["threads"]
+   conda:
+       "workflow/envs/fastqc.yml"
+   shell:
+       """
+       mkdir -p {params.prefix}
+       fastqc -t {threads} {input.r1} {input.r2} --outdir {params.prefix} &> {log} 
+       """
+
+rule sortmerna:
+    input:
+       r1 = "01_trim/{sample}_R1_trim.fastq.gz",
+       r2 = "01_trim/{sample}_R2_trim.fastq.gz",
+       database = "tmp/rrna_db.fa",
+       tool = "workflow/scripts/bin/sortmerna"
+    output:
+        r1 = "02_rrna_filtered/{sample}_fwd.fq.gz",
+        r2 = "02_rrna_filtered/{sample}_rev.fq.gz"
+    log:
+        "logs/{sample}_sortmerna.log"
+    params:
+        outdir = "02_rrna_filtered/{sample}",
+        temp_wd = temp("02_rrna_filtered/{sample}_wd")
+    shell:
+        """
+        mkdir -p 02_rrna_filtered/wd
+        {input.tool} --ref {input.database} \
+                  --reads {input.r1} --reads {input.r2} \
+                  --workdir {params.temp_wd} \
+                  --fastx \
+                  --paired_out \
+                  --other {params.outdir} \
+                  --out2 \
+                  --num_alignments 1 \
+                  > {log} 2>&1
+        """
+
+
+rule kraken2:
+    input:
+        r1 = "02_rrna_filtered/{sample}_fwd.fq.gz",
+        r2 = "02_rrna_filtered/{sample}_rev.fq.gz"
+    output:
+        kraken2="03_kraken2_report/{sample}.output.txt",
+        kraken2_report="00_qc/{sample}.report.txt"
+    log:
+        "logs/{sample}_kraken2.log"
+    params:
+        db = "tmp/kraken2"
+    conda: "workflow/envs/kraken2.yml"
+    threads: config["threads"]
+    shell:
+        """
+        mkdir -p 03_kraken2_report
+        kraken2 --db {params.db} \
+        --threads {threads} \
+        --paired \
+        --output {output.kraken2} \
+        --report {output.kraken2_report} \
+        {input.r1} {input.r2}
+        """
+
+rule kraken2_filter:
+    input:
+        r1 = "02_rrna_filtered/{sample}_fwd.fq.gz",
+        r2 = "02_rrna_filtered/{sample}_rev.fq.gz",
+        kraken2_output = "03_kraken2_report/{sample}.output.txt",
+        kraken2_report="00_qc/{sample}.report.txt"
+    output:
+        r1 = "03_kraken2_report/{sample}_fwd.fq.gz",
+        r2 = "03_kraken2_report/{sample}_rev.fq.gz"
+    log: "logs/{sample}_kraken2_filter.log"
+    conda: "workflow/envs/kraken2.yml"
+    params:
+        r1 = "03_kraken2_report/{sample}_fwd.fq",
+        r2 = "03_kraken2_report/{sample}_rev.fq"
+    shell:
+        """
+        extract_kraken_reads.py \
+        -k {input.kraken2_output} \
+        -t  6157 \
+        --include-children \
+        -r {input.kraken2_report} \
+        -s1 {input.r1} \
+        -s2 {input.r2} \
+        --fastq-output \
+        -o {params.r1} \
+        -o2 {params.r2} > {log} 2>&1 
+        
+        gzip {params.r1} {params.r2}
+        """
+
+rule multiqc:
+    input:
+        expand("00_qc/{sample}.report.txt", sample=sample_names),
+        expand("00_qc/{sample}_post_trim.done", sample=sample_names),
+        expand("04_star/{sample}_Log.final.out", sample=sample_names)
+    output:
+        "00_qc/multiqc.html"
+    params:
+        name = "multiqc.html"
+    conda: "workflow/envs/multiqc.yml"
+    log: "logs/{multiqc.log"
+    shell:
+        """
+        multiqc --force --no-data-dir --filename {params.name} 00_qc/ > {log} 2>&1
+        mv {params.name} 00_qc/
+        """
+
+
+####################
+###              ###
+### Read mapping ###
+###              ###
+####################
+
+
+rule gff2gtf:
+    input:
+        gff = config["annotation"]
+    output: "workflow/resources/genome/annotation.gtf"
+    conda: "workflow/envs/agat.yml"
+    shell:
+        """
+        agat_convert_sp_gff2gtf.pl --gff {input.gff} -o {output}
+        """
+
+rule genome_index:
+    input:
+        gtf = "workflow/resources/genome/annotation.gtf",
+        genome = config["genome"]
+    output:
+        "04_star/star_index_done"
+    log: "logs/star_index.log"
+    conda: "workflow/envs/star.yml"
+    threads: config["threads"]
+    shell:
+        """
+        STAR \
+        --runThreadN {threads} \
+        --runMode genomeGenerate \
+        --genomeDir 04_star/STAR_index  \
+        --genomeSAindexNbases 13 \
+        --genomeFastaFiles {input.genome} \
+        --sjdbGTFfile {input.gtf} \
+        --sjdbOverhang 100 > {log} 2>&1 && touch {output}
+        """
+
+
+rule read_alignment:
+    input: 
+        r1 = "03_kraken2_report/{sample}_fwd.fq.gz",
+        r2 = "03_kraken2_report/{sample}_rev.fq.gz",
+        index="04_star/star_index_done"
+    output:
+        tab = "04_star/{sample}_ReadsPerGene.out.tab",
+        bam = "04_star/{sample}_Aligned.sortedByCoord.out.bam",
+        log = "04_star/{sample}_Log.final.out"
+    params:
+        path = "04_star/{sample}",
+        prefix = "{sample}"
+    log:
+        "logs/{sample}_star_alignment.log"
+    threads: config['threads']
+    conda:
+        "workflow/envs/star.yml"
+    shell:
+        """
+        STAR \
+        --runThreadN {threads} \
+        --genomeDir 04_star/STAR_index \
+        --genomeLoad LoadAndKeep \
+        --limitBAMsortRAM 50000000000 \
+        --readFilesCommand gunzip -c \
+        --readFilesIn {input.r1} {input.r2} \
+        --outFilterType BySJout \
+        --outFilterMultimapNmax 20 \
+        --alignSJoverhangMin 8 \
+        --alignSJDBoverhangMin 1 \
+        --outFilterMismatchNmax 999 \
+        --outFilterMismatchNoverLmax 0.1 \
+        --alignIntronMin 20 \
+        --alignIntronMax 1000000 \
+        --alignMatesGapMax 1000000 \
+        --outSAMattributes NH HI NM MD \
+        --outSAMtype BAM SortedByCoordinate \
+        --quantMode GeneCounts \
+        --outFileNamePrefix {params.path}_ > {log} 2>&1
+
+        cp {output.log} 00_qc/{params.prefix}_Log.final.out
+        """
+
+
+rule all_STAR:
+    priority: 1
+    input:
+        expand("04_star/{sample}_ReadsPerGene.out.tab", sample=sample_names),
+        index = "04_star/star_index_done"
+    output:
+        touch("04_star/done_all_STAR")
+    conda:
+        "workflow/envs/star.yml"
+    shell:
+        """
+        STAR \
+        --genomeDir 04_star/STAR_index \
+        --genomeLoad Remove
+        """
+
+rule featurecounts:
+    input:
+        bam = expand("04_star/{sample}_Aligned.sortedByCoord.out.bam", sample=sample_names),
+        annotation = "workflow/resources/genome/annotation.gtf"
+    output:
+        "05_featurecounts/counts.txt"
+    conda: "workflow/envs/featurecounts.yml"
+    threads: config["threads"]
+    params: "-t exon -g gene_id -p"
+    shell:
+        """
+        featureCounts \
+        {params} \
+        -T {threads} \
+        -a {input.annotation} \
+        -o {output} \
+        {input.bam}
+        """
