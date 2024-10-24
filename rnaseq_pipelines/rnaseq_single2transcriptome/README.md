@@ -1,8 +1,8 @@
-# Paired RNAseq alignment to genome
+# Single-end RNAseq alignment to transcriptome using pseudoaligner
 
 A pipeline used to align short paired-end Illumina reads to a genome.
 
-![](https://github.com/fka21/genomics_smk_pipelines/rnaseq_pipelines/rnaseq_single2transcriptome/dag.svg)
+![](https://github.com/fka21/genomics_smk_pipelines/blob/main/rnaseq_pipelines/rnaseq_single2transcriptome/dag.svg)
 
 Steps included in the pipeline:
 * Initialization steps (symlinking databases, installing tools, indexing genome, conversion of GFF3 to GTF)
