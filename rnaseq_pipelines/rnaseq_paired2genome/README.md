@@ -2,7 +2,7 @@
 
 A pipeline used to align short paired-end Illumina reads to a transcriptome.
 
-![](https://github.com/fka21/genomics_smk_pipelines/blob/main/rnaseq_pipelines/rnaseq_single2transcriptome/dag.svg)
+![](https://github.com/fka21/genomics_smk_pipelines/blob/main/rnaseq_pipelines/rnaseq_paired2genome/dag.svg)
 
 Steps included in the pipeline:
 * Initialization steps (symlinking databases, installing tools, indexing genome, and GFF3 conversion)
