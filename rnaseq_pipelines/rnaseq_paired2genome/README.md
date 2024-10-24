@@ -1,4 +1,4 @@
-# Assembly evaluation pipeline
+# Paired RNAseq alignment to genome
 
 A pipeline used to align short paired-end Illumina reads to a genome.
 
