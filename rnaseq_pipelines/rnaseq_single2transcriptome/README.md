@@ -1,15 +1,15 @@
 # Single-end RNAseq alignment to transcriptome using pseudoaligner
 
-A pipeline used to align short paired-end Illumina reads to a genome.
+A pipeline used to align short single-end Illumina reads to a transcriptome.
 
 ![](https://github.com/fka21/genomics_smk_pipelines/blob/main/rnaseq_pipelines/rnaseq_single2transcriptome/dag.svg)
 
 Steps included in the pipeline:
-* Initialization steps (symlinking databases, installing tools, indexing genome, conversion of GFF3 to GTF)
-* Trimming of reads using [fastp]()
-* Filtering reads for rRNA contamination using [sortmerna]() and for contaminants using [kraken2]().
-* Alignment to the genome is performed using [STAR]()
-* Multiple quality checks are also performed and gathered with [MultiQC]()
+* Initialization steps (symlinking databases, installing tools, indexing transcriptome)
+* Trimming of reads using [fastp](https://github.com/OpenGene/fastp)
+* Filtering reads for rRNA contamination using [sortmerna]() and for contaminants using [kraken2](https://github.com/DerrickWood/kraken2).
+* Alignment to the transcriptome is performed using [salmon](https://combine-lab.github.io/salmon/)
+* Multiple quality checks are also performed and gathered with [MultiQC](https://seqera.io/multiqc/)
   
 
 > **NOTE**  
@@ -36,12 +36,6 @@ snakemake --cores [user-defined] --use-conda all
 
 ## Output
 
-The runs from different evaluation methods are grouped in `[method]_report/` directories. Within each directory multiple directories are found for each input assembly.
-
-> **NOTE**
-> 
-> The `inspector_report/` outputs can be utilized to further correct  for local misassemblies. Please consult [inspector](https://github.com/Maggi-Chen/Inspector) documentation for further information.
-
-
+The quantification files are located in `04_salmon/` directory. MultiQC report are found in `00_qc/multiqc.html`.
 
 
