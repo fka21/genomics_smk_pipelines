@@ -21,7 +21,7 @@ Apart from [Snakemake](https://snakemake.readthedocs.io/en/stable/) and [Anacond
 
 Please upload to `workflow/resources` directory where the different assemblies and reads will be located:
 * Transcriptomes should be placed in `workflow/resources/transcriptome/` directory and the `config/config.yml` should be modified to include the new transcritpome. 
-* PSingle-end reads should be stored in `workflow/resources/reads/`. These should be automatically detected.
+* Single-end reads should be stored in `workflow/resources/reads/`. These should be automatically detected.
 
 > **NOTE**
 > Please edit the `config/config.yml` with the desired genome and annotation file name. Also, check if the suffix in the config file is the same as the reads. Same holds true to the desire databases.
