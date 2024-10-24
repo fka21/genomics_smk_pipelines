@@ -20,8 +20,8 @@ Steps included in the pipeline:
 Apart from [Snakemake](https://snakemake.readthedocs.io/en/stable/) and [Anaconda](https://docs.anaconda.com/miniconda/), should also be present and added to the `$PATH` variable.
 
 Please upload to `workflow/resources` directory where the different assemblies and reads will be located:
-* Assemblies with a `.fa` suffix and GFF3 formatted annotation files should be placed in `workflow/resources/genome/` directory
-* Paired-end reads should be stored in `workflow/resources/reads/`
+* Transcriptomes should be placed in `workflow/resources/transcriptome/` directory and the `config/config.yml` should be modified to include the new transcritpome. 
+* PSingle-end reads should be stored in `workflow/resources/reads/`. These should be automatically detected.
 
 > **NOTE**
 > Please edit the `config/config.yml` with the desired genome and annotation file name. Also, check if the suffix in the config file is the same as the reads. Same holds true to the desire databases.
