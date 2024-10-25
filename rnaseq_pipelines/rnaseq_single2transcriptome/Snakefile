@@ -63,13 +63,14 @@ rule sortmerna_install:
 
 rule trim:
     input:
-       r1 = expand("workflow/resources/reads/{sample}.fastq.gz", sample=sample_names)
+       r1 = "workflow/resources/reads/{sample}.fastq.gz"
     output:
-       r1 = "01_trim/{sample}_trim.fastq.gz"
+       r1 = "01_trim/{sample}_trim.fastq.gz",
+       json = "00_qc/{sample}.json"
     log:
        "logs/{sample}_fastp.log"
     params:
-        output_dir = "02_trim/",
+        html = "01_trim/{sample}.html",
         quality = 30,
         window = 5
     conda:
@@ -83,6 +84,8 @@ rule trim:
         -o {output.r1} \
         -q {params.quality} \
         -5 \
+        -j {output.json} \
+        -h {params.html} \
         --cut_front_window_size {params.window} \
         --cut_front_mean_quality {params.quality} \
         -r \
@@ -142,7 +145,7 @@ rule kraken2:
         r1 = "02_rrna_filtered/{sample}.fq.gz"
     output:
         kraken2="03_kraken2_report/{sample}.output.txt",
-        kraken2_report="00_qc/{sample}/{sample}.report.txt"
+        kraken2_report="00_qc/{sample}.report.txt"
     log:
         "logs/{sample}_kraken2.log"
     params:
@@ -163,7 +166,7 @@ rule kraken2_filter:
     input:
         r1 = "02_rrna_filtered/{sample}.fq.gz",
         kraken2_output = "03_kraken2_report/{sample}.output.txt",
-        kraken2_report = "00_qc/{sample}/{sample}.report.txt"
+        kraken2_report = "00_qc/{sample}.report.txt"
     output:
         r1 = "03_kraken2_report/{sample}_filtered.fq.gz"
     log: "logs/{sample}_kraken2_filter.log"
@@ -187,9 +190,9 @@ rule kraken2_filter:
 
 rule multiqc:
     input:
-        expand("00_qc/{sample}/{sample}.report.txt", sample=sample_names),
-        expand("00_qc/{sample}/{sample}_post_trim.done", sample=sample_names),
-        expand("00_qc/{sample}/lib_format_counts.json", sample=sample_names)
+        expand("00_qc/{sample}.report.txt", sample = sample_names),
+        expand("00_qc/{sample}.json",  sample = sample_names),
+        expand("04_salmon/{sample}/quant.sf",  sample = sample_names)
     output:
         "00_qc/multiqc.html"
     params:
@@ -198,7 +201,7 @@ rule multiqc:
     log: "logs/multiqc.log"
     shell:
         """
-        multiqc --force -d -dd 1 --filename {params.name} 00_qc/ 04_salmon/ > {log} 2>&1
+        multiqc --force -d  --filename {params.name} 00_qc/ 04_salmon/ > {log} 2>&1
         mv {params.name} 00_qc/
         """
 
