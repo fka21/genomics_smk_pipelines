@@ -32,7 +32,7 @@ rule all:
         "data/reads/reads.fq",
         "contaminant_screening_done.flag",
         expand("inspector_report/{sample}", sample=assemblies),
-        expand("kmer_report/{sample}.spectra-asm.fl.png", sample=assemblies),
+        expand("kmer_report/{sample}/{sample}.spectra-asm.fl.png", sample=assemblies),
         expand("busco_report/{sample}", sample=assemblies)
 
 
@@ -92,13 +92,13 @@ rule assembly_kmer:
         assembly="data/assemblies/{assemblies}.fa",
         read_db="tmpdir/reads_kmer_db"
     output:
-        "kmer_report/{assemblies}.spectra-asm.fl.png"
+        "kmer_report/{assemblies}/{assemblies}.spectra-asm.fl.png"
     conda:
         "bin/config/assembly_qc.yml"
     shell:
         """
-        mkdir -p kmer_report && cd kmer_report
-        merqury.sh ../{input.read_db} ../{input.assembly} {wildcards.assemblies}
+        mkdir -p kmer_report/{wildcards.assemblies} && cd kmer_report/{wildcards.assemblies}
+        merqury.sh ../../{input.read_db} ../../{input.assembly} {wildcards.assemblies}
         """
 
 # Rule inspector - perform inspector analysis on reads and assembly
