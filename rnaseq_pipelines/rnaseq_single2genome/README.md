@@ -1,6 +1,6 @@
 # Single-end RNAseq alignment to genome
 
-A pipeline used to align short single-end Illumina reads to a transcriptome.
+A pipeline used to align short single-end Illumina reads to a genome assembly.
 
 ![](https://github.com/fka21/genomics_smk_pipelines/blob/main/rnaseq_pipelines/rnaseq_single2genome/dag.png)
 
