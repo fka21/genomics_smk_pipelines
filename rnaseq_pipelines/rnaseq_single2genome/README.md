@@ -12,11 +12,11 @@ Steps included in the pipeline:
 * Multiple quality checks are also performed and gathered with [MultiQC](https://seqera.io/multiqc/)
   
 
-> **NOTE**  
+> **NOTE 1**  
 > 
 > For the different tools I used the parameters I deemed appropriate for my own analyses. To customize the pipeline towards specific needs, please inqure the documentation of the desired tool and adjust the `Snakefile` accordingly.
 
-> **NOTE**  
+> **NOTE 2**  
 > 
 > The example files are empty, please use your own files for testing and don't forget to setup the config.yml and the Snakefile for it.
 
