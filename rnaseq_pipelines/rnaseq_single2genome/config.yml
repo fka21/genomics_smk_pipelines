@@ -1,0 +1,5 @@
+genome: "workflow/resources/genome/genome.fa"
+annotation: "workflow/resources/genome/genome.gtf"
+rrna_db: "/projects/ferenc.kagan/Databases/rRNA_databases_v4/smr_v4.3_sensitive_db.fasta"
+kraken2_db: "/projects/ferenc.kagan/Databases/kraken_plan/"
+threads: 30
