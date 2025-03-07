@@ -1,9 +1,18 @@
 configfile: "bin/config/config.yml"
 
-# Define sample names from the file structure
-sample = glob_wildcards("data/reads/{fname}.fa").fname
+import os
+import glob
 
+# Define sample names dynamically based on available files
+def get_samples():
+    samples = []
+    for ext in ["*.fa", "*.fq", "*.fq.gz", "*.fastq", "*.fastq.gz"]:
+        samples += [os.path.splitext(os.path.basename(f))[0] for f in glob.glob(f"data/reads/{ext}")]
+    return list(set(samples))
 
+sample = get_samples()
+
+# Rule all: Define the final outputs
 rule all:
     input:
         expand("genomescope_report/{sample}", sample=sample),
@@ -12,9 +21,17 @@ rule all:
         expand("kraken2_report/krona_report/{sample}.html", sample=sample),
         expand("nanoplot_report/{sample}", sample=sample)
 
+def dynamic_input(wildcards):
+    sample_name = wildcards.sample.rsplit('.', 1)[0]  # Remove file extension if present
+    for ext in [".fa", ".fq", ".fq.gz", ".fastq", ".fastq.gz"]:
+        file_path = f"data/reads/{sample_name}{ext}"
+        if os.path.exists(file_path):
+            return file_path
+    raise FileNotFoundError(f"No valid input file found for sample {sample_name}")
+
 rule fasta2fastq:
     input:
-        reads="data/reads/{sample}.fa"
+        reads=dynamic_input
     output:
         reads="data/reads/{sample}.fq"
     conda:
@@ -22,7 +39,11 @@ rule fasta2fastq:
     params: "-F '#'"
     shell:
         """
-        seqtk seq {params} {input.reads} > {output.reads}
+        if [[ "{input.reads}" == *.fq || "{input.reads}" == *.fq.gz || "{input.reads}" == *.fastq || "{input.reads}" == *.fastq.gz ]]; then
+            cp {input.reads} {output.reads}
+        else
+            seqtk seq {params} {input.reads} > {output.reads}
+        fi
         """
 
 rule kmer_counter:
@@ -103,7 +124,7 @@ rule genomescope:
 
 rule contamination_evaluation:
     input:
-        reads="data/reads/{sample}.fa"
+        reads=dynamic_input
     output:
         kraken2="kraken2_report/{sample}.output.txt",
         kraken2_report="kraken2_report/{sample}.report.txt",
@@ -138,7 +159,7 @@ rule contamination_visualisation:
 
 rule nanoplot:
     input:
-        reads="data/reads/{sample}.fa"
+        reads=dynamic_input
     output:
         outdir=directory("nanoplot_report/{sample}")
     conda:
