@@ -56,9 +56,11 @@ snakemake --cores [user-defined] --use-conda all
 
 The runs from different evaluation methods are grouped in `[method]_report/` directories. Within each directory multiple directories are found for each input assembly.
 
-> **NOTE**
-> 
-> The `inspector_report/` outputs can be utilized to further correct  for local misassemblies. Please consult [inspector](https://github.com/Maggi-Chen/Inspector) documentation for further information.
+* Metrics listed above will be compiled into a  `.csv` files. It can be found in the `assembly_evaluation/assembly_metrics_summary.csv`. In this directory some plots can also be found to ease the comparison of the genome assemblies.
+* A refined assembly is placed in the `final_assemblies/` directory. Here each input assembly will receive its own subdirectory and the refined assemblies can be found within these. The refinements are highlighted below.
+    * It will attempt to find and extract mitochondrial genome presence in the assembly using [MitoHiFi](https://github.com/marcelauliano/MitoHiFi).
+    * It will remove contaminants identified through the [fcs](https://github.com/ncbi/fcs) pipeline.
+    * It will correct the assemblies using read information using the [inspector-correct](https://github.com/Maggi-Chen/Inspector).
 
 
 
