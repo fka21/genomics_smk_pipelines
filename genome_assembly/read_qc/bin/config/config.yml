@@ -1,0 +1,2 @@
+reads: data/reads/toy_reads.fa
+db: bin/db/kraken_plan/

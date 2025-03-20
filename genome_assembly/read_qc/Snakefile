@@ -1,9 +1,21 @@
 configfile: "bin/config/config.yml"
 
-# Define sample names from the file structure
-sample = glob_wildcards("data/reads/{fname}.fa").fname
+import os
+import glob
 
+# Define sample names dynamically based on available files
+def get_samples():
+    samples = []
+    for ext in ["*.fa", "*.fq", "*.fq.gz", "*.fastq", "*.fastq.gz"]:
+        for f in glob.glob(f"data/reads/{ext}"):
+            real_path = os.path.realpath(f)
+            sample_name = os.path.splitext(os.path.basename(real_path))[0]
+            samples.append(sample_name)
+    return list(set(samples))
 
+sample = get_samples()
+
+# Rule all: Define the final outputs
 rule all:
     input:
         expand("genomescope_report/{sample}", sample=sample),
@@ -12,9 +24,17 @@ rule all:
         expand("kraken2_report/krona_report/{sample}.html", sample=sample),
         expand("nanoplot_report/{sample}", sample=sample)
 
+def dynamic_input(wildcards):
+    sample_name = wildcards.sample.rsplit('.', 1)[0]  # Remove file extension if present
+    for ext in [".fa", ".fq", ".fq.gz", ".fastq", ".fastq.gz"]:
+        file_path = f"data/reads/{sample_name}{ext}"
+        if os.path.lexists(file_path):
+            return os.path.realpath(file_path)
+    raise FileNotFoundError(f"No valid input file found for sample {sample_name}")
+
 rule fasta2fastq:
     input:
-        reads="data/reads/{sample}.fa"
+        reads=dynamic_input
     output:
         reads="data/reads/{sample}.fq"
     conda:
@@ -22,12 +42,16 @@ rule fasta2fastq:
     params: "-F '#'"
     shell:
         """
-        seqtk seq {params} {input.reads} > {output.reads}
+        if [[ "{input.reads}" == *.fq || "{input.reads}" == *.fq.gz || "{input.reads}" == *.fastq || "{input.reads}" == *.fastq.gz ]]; then
+            cp {input.reads} {output.reads}
+        else
+            seqtk seq {params} {input.reads} > {output.reads}
+        fi
         """
 
 rule kmer_counter:
     input:
-        reads="data/reads/{sample}.fq"
+        reads=dynamic_input
     output:
         output_dir=directory("kmer_counter/{sample}")
     log:
@@ -36,13 +60,13 @@ rule kmer_counter:
         "bin/config/kmer.yml"
     threads: 40
     params:
-        args="-k27 -m128",
+        args="-k21 -m128",
         tmp=temp("tmpdir_kmer")
     shell:
         """
         mkdir -p {output.output_dir} && cd {output.output_dir}
         mkdir -p {params.tmp}
-        kmc {params.args} -t{threads} ../../{input.reads} {wildcards.sample} {params.tmp}
+        kmc {params.args} -t{threads} {input.reads} {wildcards.sample} {params.tmp}
         """
 
 rule kmer2hist:
@@ -55,7 +79,7 @@ rule kmer2hist:
     params:
         operation1="transform",
         operation2="histogram",
-        maxcov="-cx10000"
+        maxcov="-cx100"
     shell:
         """
         kmc_tools {params.operation1} {input}/{sample} {params.operation2} {output.histo} {params.maxcov}
@@ -71,7 +95,7 @@ rule smudgeplot:
     conda:
         "bin/config/kmer.yml"
     params:
-        kmer="-k 27",
+        kmer="-k 21",
         output_pattern="{sample}",
         output_dir="kmer_histograms/{sample}"
     shell:
@@ -97,13 +121,13 @@ rule genomescope:
         cd bin/workflow/scripts/genomescope2.0/
         Rscript install.R
         cd ../../../../
-        genomescope.R -i {input.histo} -o {output}
+        genomescope.R -i {input.histo} -o {output} -m 100 -k 21
         """
 
 
 rule contamination_evaluation:
     input:
-        reads="data/reads/{sample}.fa"
+        reads=dynamic_input
     output:
         kraken2="kraken2_report/{sample}.output.txt",
         kraken2_report="kraken2_report/{sample}.report.txt",
@@ -138,15 +162,17 @@ rule contamination_visualisation:
 
 rule nanoplot:
     input:
-        reads="data/reads/{sample}.fa"
+        reads=dynamic_input
     output:
         outdir=directory("nanoplot_report/{sample}")
     conda:
         "bin/config/nanoplot.yml"
     threads: 40
+    log:
+        "logs/nanoplot_{sample}.log"
     params:
         "--dpi 300 --format 'pdf'"
     shell:
         """
-        NanoPlot --fasta {input} --outdir {output.outdir} --threads {threads}
+        NanoPlot --fastq {input} --outdir {output.outdir} --threads {threads}
         """
