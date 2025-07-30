@@ -2,7 +2,7 @@
 
 A pipeline used to evaluate _de novo_ genome assemblies. Theoretically can be used on both contigs and scaffolds. It aggregates reports from several independent evaluation methods. It is tailored towards the evaluation of assemblies generated using solely PacBio HiFi data. It will also attempt to extract mitochondrial genome, decontaminate, and correct misassembly events.
 
-![](assembly_qc/dag.pdf)
+![](dag.png)
 
 ### Metrics evaluated:
 * Genome gene complement completeness by utilizing [BUSCO](https://busco.ezlab.org/).
