@@ -1,4 +1,4 @@
-import os
+#import os
 
 ############################
 ###                      ###
@@ -9,15 +9,18 @@ import os
 # Detect the first directory in the busco_downloads/lineages/ folder
 lineage_dir = sorted(os.listdir("busco_downloads/lineages/"))[0]
 
-configfile: "bin/config/config.yml"
+configfile: "config/config.yml"
 
 # Automatically detect sample names from assemblies
-assemblies = glob_wildcards("data/assemblies/{sample}.fa").sample
+assemblies = glob_wildcards("workflow/resources/assemblies/{sample}.fa").sample
 
 # Read configuration values
 taxid = config['taxid']
 gxdb = config['gxdb']
-
+species = config['species']
+reads = config['reads']
+genome_size = config['genome_size']
+estimated_coverage = config['estimated_coverage']
 
 #################################################
 ###                                           ###
@@ -28,12 +31,15 @@ gxdb = config['gxdb']
 # Rule all - collects all targets
 rule all:
     input:
-        "tmpdir/reads_kmer_db",
-        "data/reads/reads.fq",
-        "contaminant_screening_done.flag",
+        "workflow/resources/reads/reads.fq",
         expand("inspector_report/{sample}", sample=assemblies),
-        expand("kmer_report/{sample}/{sample}.spectra-asm.fl.png", sample=assemblies),
-        expand("busco_report/{sample}", sample=assemblies)
+        expand("kmer_report/{sample}/{sample}.spectra-asm.hist", sample=assemblies),
+        expand("busco_report/{sample}/short_summary.specific.metazoa_odb10.{sample}.txt", sample=assemblies),
+        expand("contamination_report/fcs_contam/{sample}/{sample}.clean.fa", sample=assemblies),
+        expand("final_assemblies/{sample}/contig_corrected.fa", sample=assemblies),
+        expand("final_assemblies/{sample}/mitochondrial_contigs.fa", sample=assemblies),
+        "cleanup_done.flag",
+        "assembly_evaluation/assembly_metrics_summary.csv"
 
 
 ########################
@@ -45,21 +51,21 @@ rule all:
 # Rule fasta2fastq - convert .fa reads to .fq format
 rule fasta2fastq:
     input:
-        reads=config['reads'] 
+        reads=reads 
     output:
-        reads="data/reads/reads.fq"  
+        reads_out="workflow/resources/reads/reads.fq"  
     conda:
-        "bin/config/assembly_qc.yml"
+        "workflow/envs/assembly_qc.yml"
     params: "-F '#'"
     shell:
         """
-        seqtk seq {params} {input.reads} > {output.reads}
+        seqtk seq {params} {input.reads} > {output.reads_out}
         """
 
 # Rule read_kmer - process reads for kmer counting
 rule read_kmer:
     input:
-        reads="data/reads/reads.fq"
+        reads="workflow/resources/reads/reads.fq"
     output:
         directory("tmpdir/reads_kmer_db")
     log:
@@ -67,45 +73,93 @@ rule read_kmer:
     params:
         "k=27 count"
     conda:
-        "bin/config/assembly_qc.yml"
+        "workflow/envs/assembly_qc.yml"
     shell:
         "(meryl output {output} {params} {input.reads}) 2> {log}"
 
 # Rule busco - run BUSCO on assemblies
 rule busco:
     input:
-        "data/assemblies/{assemblies}.fa"
+        "workflow/resources/assemblies/{assemblies}.fa"
     output:
-        directory("busco_report/{assemblies}")
+        short_summary="busco_report/{assemblies}/short_summary.specific.metazoa_odb10.{assemblies}.txt",
+        output_dir=directory("busco_report/{assemblies}")
     log:
         "logs/busco_{assemblies}.log"
     threads: 30
-    params: "-m geno -l busco_downloads/lineages/metazoa_odb10"
+    params: 
+        general_params="--metaeuk -m geno -l busco_downloads/lineages/metazoa_odb10"
+
     conda:
-        "bin/config/assembly_qc.yml"
+        "workflow/envs/assembly_qc.yml"
     shell:
-        "(busco -i {input} -o {output} -c {threads} {params}) 2> {log}"
+        "(busco -i {input} -o {output.output_dir} -c {threads} -f {params.general_params}) 2> {log}"
 
 # Rule assembly_kmer - compare read kmer with assembly
 rule assembly_kmer:
     input:
-        assembly="data/assemblies/{assemblies}.fa",
+        assembly="workflow/resources/assemblies/{assemblies}.fa",
         read_db="tmpdir/reads_kmer_db"
     output:
-        "kmer_report/{assemblies}/{assemblies}.spectra-asm.fl.png"
+        kmer_profile="kmer_report/{assemblies}/{assemblies}.spectra-asm.hist"
     conda:
-        "bin/config/assembly_qc.yml"
+        "workflow/envs/assembly_qc.yml"
     shell:
         """
         mkdir -p kmer_report/{wildcards.assemblies} && cd kmer_report/{wildcards.assemblies}
         merqury.sh ../../{input.read_db} ../../{input.assembly} {wildcards.assemblies}
         """
 
+
+# Rule contaminant_screening - run contaminant and vector screening for all assemblies
+rule contaminant_screening:
+    input:
+        assemblies=expand("workflow/resources/assemblies/{sample}.fa", sample=assemblies)
+    output:
+        "contamination_report/contaminant_screening_done.flag"
+    log:
+        "logs/contaminant_screening.log"
+    params:
+        working_dir="./",
+        taxid=taxid,
+        tools="workflow/scripts/",
+        db=gxdb
+    shell:
+        """
+        bash workflow/scripts/contaminant_screening.sh {params.working_dir} "{input.assemblies}" {params.taxid} {params.tools} {params.db} 2> {log}
+        touch contamination_report/contaminant_screening_done.flag
+        """
+
+# Rule filter_contaminated_sequences - filter out contaminated sequences
+rule filter_contaminated_sequences:
+    input:
+        flag="contamination_report/contaminant_screening_done.flag"
+    output:
+        clean_fasta="contamination_report/fcs_contam/{assemblies}/{assemblies}.clean.fa"
+    params:
+        temp_file="contamination_report/fcs_contam/{assemblies}/{assemblies}.temp_ids.txt",
+        report="contamination_report/fcs_contam/{assemblies}/{assemblies}." + str(taxid) + ".fcs_gx_report.txt",
+        fasta="contamination_report/fcs_vec/{assemblies}/cleaned_sequences/{assemblies}.fa"
+    conda:
+        "workflow/envs/assembly_qc.yml"
+    shell:
+        """
+        # Extract sequence IDs with the EXCLUDE flag from the contamination report
+        awk '$5 == "EXCLUDE" {{print $1}}' {params.report} > {params.temp_file}
+
+        # Use seqtk to remove the flagged sequences from the FASTA file
+        seqkit grep -v -f {params.temp_file} {params.fasta} > {output.clean_fasta}
+
+        # Cleanup temporary file
+        rm {params.temp_file}
+        """
+
+
 # Rule inspector - perform inspector analysis on reads and assembly
 rule inspector:
     input:
-        assembly="data/assemblies/{assemblies}.fa",
-        reads="data/reads/reads.fq"  
+        assembly="contamination_report/fcs_contam/{assemblies}/{assemblies}.clean.fa",
+        reads="workflow/resources/reads/reads.fq"  
     output:
         directory("inspector_report/{assemblies}")
     log:
@@ -114,24 +168,170 @@ rule inspector:
     params:
         dtype="--datatype hifi"
     conda:
-        "bin/config/inspector.yml"
-    shell:
-        "inspector.py -c {input.assembly} -r {input.reads} -o {output} -t {threads} {params.dtype}"
-
-# Rule contaminant_screening - run contaminant and vector screening for all assemblies
-rule contaminant_screening:
-    input:
-        assemblies=expand("data/assemblies/{sample}.fa", sample=assemblies)
-    output:
-        "contaminant_screening_done.flag"  # Use a flag file to indicate completion
-    log:
-        "logs/contaminant_screening.log"
-    params:
-        working_dir="./",
-        taxid=taxid,
-        tools="bin/scripts/",
-        db=gxdb
+        "workflow/envs/inspector.yml"
     shell:
         """
-        bash bin/scripts/contaminant_screening.sh {params.working_dir} "{input.assemblies}" {params.taxid} {params.tools} {params.db} 2> {log}
+        # Mapping manually
+        sed -i 's/|/_/g' {input.assembly}                                                   # hifiasm add "|" in the headers, which is not compatible with Inspector
+        minimap2 -Q -N 1 -ax map-hifi -t {threads} {input.assembly} {input.reads} | \
+        samtools sort -@ {threads} -o {wildcards.assemblies}_read_to_contig.bam
+
+        # Index the sorted BAM
+        samtools index -@ {threads} {wildcards.assemblies}_read_to_contig.bam
+        
+        # Setup Inspector workspace
+        mkdir -p inspector_report/{wildcards.assemblies}
+        mv {wildcards.assemblies}_read_to_contig.ba* inspector_report/{wildcards.assemblies}
+        cd inspector_report/{wildcards.assemblies}
+        mv {wildcards.assemblies}_read_to_contig.bam read_to_contig.bam
+        mv {wildcards.assemblies}_read_to_contig.bam.bai read_to_contig.bam.bai
+        cd ../../
+
+        # Run inspector with pre-aligned BAM
+        workflow/scripts/Inspector/inspector.py \
+            -c {input.assembly} \
+            -r inspector_report/{wildcards.assemblies}/read_to_contig.bam \
+            -o {output} \
+            -t {threads} \
+            {params.dtype} \
+            --skip_read_mapping
+        """
+
+        
+rule inspector_correct:
+    input:
+        inspector_dir="inspector_report/{assemblies}"
+    output:
+        corrected_fasta="final_assemblies/{assemblies}/contig_corrected.fa"
+    log:
+        "logs/inspector_correct_{assemblies}.log"
+    params:
+        dtype="--datatype pacbio-hifi --skip_structural",
+        inspector_dir="inspector_report/{assemblies}"
+    conda:
+        "workflow/envs/inspector.yml"
+    shell:
+        """
+        sed -i 's/|/_/g' {params.inspector_dir}/valid_contig.fa
+        workflow/scripts/Inspector/inspector-correct.py -i {input.inspector_dir} {params.dtype} -o {params.inspector_dir} > {log} 2>&1
+        mkdir -p final_assemblies/{wildcards.assemblies}
+        mv {params.inspector_dir}/contig_corrected.fa {output.corrected_fasta}
+        """
+
+# Rule mitochondrial_contigs - extract mitochondrial contigs from assemblies
+rule mitochondrial_contigs:
+    input:
+        corrected_fasta="final_assemblies/{assemblies}/contig_corrected.fa"
+    output:
+        mitochondrial_fasta="final_assemblies/{assemblies}/mitochondrial_contigs.fa",
+        no_mito_found="final_assemblies/{assemblies}/no_mitochondrial_genome_found.txt"
+    log:
+        "logs/mitochondrial_contigs_{assemblies}.log"
+    params:
+        species=lambda wildcards: f'"{species}"',  # Wrap species in quotes
+        genetic_code=9,
+        outfolder=lambda wildcards: os.path.abspath(f"final_assemblies/{wildcards.assemblies}")
+    threads: 30
+    shell:
+        """
+        set +e
+
+        # Fetch mitochondrial contigs from GenBank
+        docker run --rm \
+            -v {params.outfolder}:/data \
+            ghcr.io/marcelauliano/mitohifi:master findMitoReference.py \
+            --species {params.species} \
+            --outfolder /data \
+            --min_length 14000
+
+        # Dynamically determine the reference genome file (e.g., based on its name in /data)
+        REFERENCE_FASTA=$(find {params.outfolder} -name "*.fasta" | head -n 1)
+        REFERENCE_GB=$(find {params.outfolder} -name "*.gb" | head -n 1)
+
+        if [ -z "$REFERENCE_FASTA" ] || [ -z "$REFERENCE_GB" ]; then
+            echo "No reference genome found. Exiting gracefully."
+            echo "No mitochondrial genome found." > {output.no_mito_found}
+            touch {output.mitochondrial_fasta}
+            exit 0
+        fi
+
+        # Extract mitochondrial contigs using MitoHiFi
+        docker run --rm \
+            -v {params.outfolder}:/data \
+            -w /data \
+            ghcr.io/marcelauliano/mitohifi:master mitohifi.py \
+            -c /data/contig_corrected.fa \
+            -f /data/$(basename "$REFERENCE_FASTA") \
+            -g /data/$(basename "$REFERENCE_GB") \
+            -t {threads} \
+            -o {params.genetic_code}
+
+
+        # Check if the output file exists and is non-empty
+        if [ -s {params.outfolder}/mitogenome.fa ]; then
+            mv {params.outfolder}/mitogenome.fa {output.mitochondrial_fasta}
+            echo "Mitochondrial genome found." > {output.no_mito_found}
+            rm {output.no_mito_found}  # Cleanup placeholder file if mito genome is found
+        else
+            echo "No mitochondrial genome found." > {output.no_mito_found}
+            touch {output.mitochondrial_fasta}  # Create an empty mito file to satisfy Snakemake
+        fi
+
+        set -e  # Restore default behavior for subsequent commands
+        """
+
+# Rule to collect summary statistics
+rule assembly_eval:
+    input:
+        busco=expand("busco_report/{sample}/short_summary.specific.metazoa_odb10.{sample}.txt", sample=assemblies),
+        kmer_profile=expand("kmer_report/{sample}/{sample}.spectra-asm.hist", sample=assemblies),
+        summary_stats=expand("inspector_report/{sample}", sample=assemblies),
+        mitochondrial_fasta=expand("final_assemblies/{sample}/mitochondrial_contigs.fa", sample=assemblies),
+        no_mito_found=expand("final_assemblies/{sample}/no_mitochondrial_genome_found.txt", sample=assemblies)
+    output:
+        csv="assembly_evaluation/assembly_metrics_summary.csv"
+    params:
+        assemblies=lambda wildcards: " ".join(assemblies),
+        genome_size=genome_size,
+        coverage=estimated_coverage
+    conda:
+        "workflow/envs/eval.yml"
+    log: "logs/assembly_eval.log"
+    shell:
+        """
+	python workflow/scripts/data_collection.py --assemblies '{params.assemblies}' --genome_size genome_size --coverage coverage 2>&1 > {log}
+	"""
+
+
+# To save memory, we can remove the temporary or redundant files generated during the analysis
+rule cleanup:
+    input:
+        expand(
+            [
+                "final_assemblies/{sample}/mitochondrial_contigs.fa",
+                "kmer_report/{sample}/{sample}.spectra-asm.hist",
+                "inspector_report/{sample}",
+                "busco_report/{sample}/short_summary.specific.metazoa_odb10.{sample}.txt"
+            ],
+            sample=assemblies
+        ),
+        "assembly_evaluation/assembly_metrics_summary.csv"
+    output:
+        "cleanup_done.flag"
+    shell:
+        """
+        set -e
+
+        # Cleanup operations
+        rm -rf tmpdir/
+        for assembly in {assemblies}; do
+            find busco_report/$assembly/run_metazoa_odb10/ -type f -not -name "full_table.tsv" -delete
+            rm -rf kmer_report/$assembly/*meryl
+            rm -rf inspector_report/$assembly/base_error_workspace/
+            rm -f inspector_report/$assembly/read_to_contig.bam
+            rm -f inspector_report/$assembly/read_to_contig.bam.csi
+            rm -rf contamination_report/fcs_vec/$assembly/cleaned_sequences/
+        done
+        rm -f contamination_report/*flag
+        touch {output}
         """

@@ -1,0 +1,6 @@
+reads: workflow/resources/reads/smeds.fa.gz
+gxdb: /DATA11900-NFS/projects/ferenc.kagan/Databases/gxdb/
+taxid: 79327
+species: "Schmidtea mediterranea"
+genome_size: 840_000_000
+estimated_coverage: 45
