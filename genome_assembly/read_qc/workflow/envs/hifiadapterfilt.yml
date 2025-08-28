@@ -1,0 +1,8 @@
+name: nanoplot
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - bamtools
+  - blast

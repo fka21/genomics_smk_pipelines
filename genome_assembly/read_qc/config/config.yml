@@ -1,0 +1,4 @@
+db: /DATA11900-NFS/projects/ferenc.kagan/Backup-data/kraken_plan/
+exclude_taxids:
+  - 40674
+  - 2

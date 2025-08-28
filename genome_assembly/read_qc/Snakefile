@@ -1,41 +1,57 @@
-configfile: "bin/config/config.yml"
+configfile: "config/config.yml"
 
 import os
 import glob
 
-# Define sample names dynamically based on available files
+# Define sample names dynamically, stripping extensions
 def get_samples():
     samples = []
     for ext in ["*.fa", "*.fq", "*.fq.gz", "*.fastq", "*.fastq.gz"]:
-        samples += [os.path.splitext(os.path.basename(f))[0] for f in glob.glob(f"data/reads/{ext}")]
+        for f in glob.glob(f"workflow/resources/reads/{ext}"):
+            real_path = os.path.realpath(f)
+            base = os.path.basename(real_path)
+            # Remove any recognized FastA/Q extension
+            for suff in [".fa", ".fq", ".fq.gz", ".fastq", ".fastq.gz"]:
+                if base.endswith(suff):
+                    base = base[:-len(suff)]
+            samples.append(base)
     return list(set(samples))
 
 sample = get_samples()
 
-# Rule all: Define the final outputs
 rule all:
     input:
         expand("genomescope_report/{sample}", sample=sample),
         expand("kmer_histograms/{sample}_hetkmers.dump", sample=sample),
         expand("kmer_histograms/{sample}_summary_table.tsv", sample=sample),
         expand("kraken2_report/krona_report/{sample}.html", sample=sample),
-        expand("nanoplot_report/{sample}", sample=sample)
+        expand("nanoplot_report/{sample}", sample=sample),
+        expand("workflow/resources/reads_cleaned/{sample}.fq", sample=sample)
 
+# Input function for original raw reads
 def dynamic_input(wildcards):
-    sample_name = wildcards.sample.rsplit('.', 1)[0]  # Remove file extension if present
+    sample_name = wildcards.sample
     for ext in [".fa", ".fq", ".fq.gz", ".fastq", ".fastq.gz"]:
-        file_path = f"data/reads/{sample_name}{ext}"
-        if os.path.exists(file_path):
-            return file_path
+        file_path = f"workflow/resources/reads/{sample_name}{ext}"
+        if os.path.lexists(file_path):
+            return os.path.realpath(file_path)
     raise FileNotFoundError(f"No valid input file found for sample {sample_name}")
+
+# Input function for output of HiFiAdapterFilt
+def hifiadapterfilt_reads_input(wildcards):
+    return f"workflow/resources/reads_hifiadptfilt/{wildcards.sample}/{wildcards.sample}.filt.fastq.gz"
+
+# Input function for Kraken2-decontaminated reads
+def cleaned_reads_input(wildcards):
+    return f"workflow/resources/reads_cleaned/{wildcards.sample}.fq"
 
 rule fasta2fastq:
     input:
         reads=dynamic_input
     output:
-        reads="data/reads/{sample}.fq"
+        reads="workflow/resources/reads/{sample}.fq"
     conda:
-        "bin/config/kmer.yml"
+        "workflow/envs/kmer.yml"
     params: "-F '#'"
     shell:
         """
@@ -46,18 +62,94 @@ rule fasta2fastq:
         fi
         """
 
+rule hifiadapterfilt:
+    input:
+        reads=dynamic_input
+    output:
+        cleaned="workflow/resources/reads_hifiadptfilt/{sample}/{sample}.filt.fastq.gz"
+    log:
+        "logs/hifiadapterfilt_{sample}.log"
+    conda:
+        "workflow/envs/hifiadapterfilt.yml"
+    params:
+        prefix=lambda wildcards: wildcards.sample,
+        outdir=lambda wildcards: f"workflow/resources/reads_hifiadptfilt/{wildcards.sample}"
+    threads: 40
+    shell:
+        """
+        mkdir -p {params.outdir}
+        ln -sf $(realpath {input.reads}) {params.outdir}/{params.prefix}.$(basename {input.reads} | rev | cut -d. -f1-2 | rev)
+        cd {params.outdir}
+        bash ../../../scripts/HiFiAdapterFilt/hifiadapterfilt.sh -p {params.prefix} -t {threads} > ../../../../{log} 2>&1
+        """
+
+
+
+rule kraken2_classify:
+    input:
+        reads=hifiadapterfilt_reads_input
+    output:
+        kraken2_output="kraken2_report/{sample}.output.txt",
+        kraken2_report="kraken2_report/{sample}.report.txt",
+        krona_input="kraken2_report/{sample}.krona_input.txt"
+    log:
+        "logs/kraken2_{sample}.log"
+    conda:
+        "workflow/envs/kraken2.yml"
+    params:
+        db=config["db"]
+    threads: 40
+    shell:
+        """
+        kraken2 --db {params.db} --threads {threads} --output {output.kraken2_output} --report {output.kraken2_report} {input.reads}
+        cut -f 2,3 {output.kraken2_output} > {output.krona_input}
+        """
+
+rule decontaminate_reads:
+    input:
+        reads=hifiadapterfilt_reads_input,
+        kraken2_output="kraken2_report/{sample}.output.txt",
+        kraken2_report="kraken2_report/{sample}.report.txt"
+    output:
+        clean="workflow/resources/reads_cleaned/{sample}.fq"
+    conda:
+        "workflow/envs/kraken2.yml"
+    params:
+        exclude_taxids=" ".join([str(x) for x in config["exclude_taxids"]])
+    log: "logs/decontaminate_{sample}.log"
+    shell:
+        """
+        extract_kraken_reads.py -k {input.kraken2_output} -r {input.kraken2_report} --include-children --exclude --taxid {params.exclude_taxids} --fastq-output -s {input.reads} -o {output.clean}
+        rm -rf workflow/resources/reads_hifiadptfilt/
+        """
+
+rule contamination_visualisation:
+    input:
+        "kraken2_report/{sample}.krona_input.txt"
+    output:
+        "kraken2_report/krona_report/{sample}.html"
+    log:
+        "logs/krona_{sample}.log"
+    conda:
+        "workflow/envs/kraken2.yml"
+    shell:
+        """
+        ktUpdateTaxonomy.sh
+        ktImportTaxonomy -o {output} {input}
+        """
+
 rule kmer_counter:
     input:
-        reads="data/reads/{sample}.fq"
+        reads=cleaned_reads_input
     output:
         output_dir=directory("kmer_counter/{sample}")
     log:
         "logs/kmer_counter_{sample}.log"
     conda:
-        "bin/config/kmer.yml"
+        "workflow/envs/kmer.yml"
     threads: 40
     params:
-        args="-k27 -m128",
+        args="-k21 -m128",
         tmp=temp("tmpdir_kmer")
     shell:
         """
@@ -72,14 +164,14 @@ rule kmer2hist:
     output:
         histo="kmer_histograms/{sample}.hist"
     conda:
-        "bin/config/kmer.yml"
+        "workflow/envs/kmer.yml"
     params:
         operation1="transform",
         operation2="histogram",
-        maxcov="-cx10000"
+        maxcov="-cx100"
     shell:
         """
-        kmc_tools {params.operation1} {input}/{sample} {params.operation2} {output.histo} {params.maxcov}
+        kmc_tools {params.operation1} {input}/{wildcards.sample} {params.operation2} {output.histo} {params.maxcov}
         """
 
 rule smudgeplot:
@@ -90,16 +182,16 @@ rule smudgeplot:
         dump="kmer_histograms/{sample}_hetkmers.dump",
         sumtbl="kmer_histograms/{sample}_summary_table.tsv"
     conda:
-        "bin/config/kmer.yml"
+        "workflow/envs/kmer.yml"
     params:
-        kmer="-k 27",
+        kmer="-k 21",
         output_pattern="{sample}",
         output_dir="kmer_histograms/{sample}"
     shell:
         """
         L=$(smudgeplot.py cutoff {input.hist} L)
         U=$(smudgeplot.py cutoff {input.hist} U)
-        kmc_tools transform {input.kmerdb}/{sample} -ci"$L" -cx"$U" dump -s {output.dump}
+        kmc_tools transform {input.kmerdb}/{wildcards.sample} -ci"$L" -cx"$U" dump -s {output.dump}
         smudgeplot.py hetkmers -o {output.dump} < {output.dump}
         smudgeplot.py plot {params.kmer} -o {params.output_dir} {output.dump}_coverages.tsv
         """
@@ -112,62 +204,28 @@ rule genomescope:
     log:
         "logs/genomescope_{sample}.log"
     conda:
-        "bin/config/kmer.yml"
+        "workflow/envs/kmer.yml"
     shell:
         """
-        cd bin/workflow/scripts/genomescope2.0/
+        cd workflow/scripts/GENESCOPE.FK
         Rscript install.R
-        cd ../../../../
-        genomescope.R -i {input.histo} -o {output}
-        """
-
-
-rule contamination_evaluation:
-    input:
-        reads=dynamic_input
-    output:
-        kraken2="kraken2_report/{sample}.output.txt",
-        kraken2_report="kraken2_report/{sample}.report.txt",
-        krona="kraken2_report/{sample}.krona_input.txt"
-    log:
-        "logs/kraken2_{sample}.log"
-    conda:
-        "bin/config/kraken2.yml"
-    params:
-        db=config['db']
-    threads: 40
-    shell:
-        """
-        kraken2 --db {params.db} --threads {threads} --output {output.kraken2} --report {output.kraken2_report} {input}
-        cut -f 2,3 {output.kraken2} > {output.krona}
-        """
-
-rule contamination_visualisation:
-    input:
-        "kraken2_report/{sample}.krona_input.txt"
-    output:
-        "kraken2_report/krona_report/{sample}.html"
-    log:
-        "logs/krona_{sample}.log"
-    conda:
-        "bin/config/kraken2.yml"
-    shell:
-        """
-        ktUpdateTaxonomy.sh
-        ktImportTaxonomy -o {output} {input}
+        cd ../../../
+        workflow/scripts/GENESCOPE.FK/GeneScopeFK.R -i{input.histo} -o{output} -k21
         """
 
 rule nanoplot:
     input:
-        reads=dynamic_input
+        reads=cleaned_reads_input
     output:
         outdir=directory("nanoplot_report/{sample}")
     conda:
-        "bin/config/nanoplot.yml"
+        "workflow/envs/nanoplot.yml"
     threads: 40
+    log:
+        "logs/nanoplot_{sample}.log"
     params:
         "--dpi 300 --format 'pdf'"
     shell:
         """
-        NanoPlot --fasta {input} --outdir {output.outdir} --threads {threads}
+        NanoPlot --fastq {input.reads} --outdir {output.outdir} --threads {threads}
         """
