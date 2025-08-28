@@ -1,6 +1,8 @@
-genome: "workflow/resources/genome/schMedA2_h1.fa"
-annotation: "workflow/resources/genome/schMedA2_h1.ENCODE_hybrid_annot.sort.gff3"
-rrna_db: "/projects/ferenc.kagan/Databases/rRNA_databases_v4/smr_v4.3_sensitive_db.fasta"
-kraken2_db: "/projects/ferenc.kagan/Databases/kraken_plan/"
+genome: "workflow/resources/genome/schMedA2h1.fa"
+annotation: "workflow/resources/genome/schMedA2h1.gff3"
+rrna_db: "/DATA11900-NFS/projects/ferenc.kagan/Backup-data/rRNA_databases_v4/smr_v4.3_sensitive_db.fasta"
+kraken2_db: "/DATA11900-NFS/projects/ferenc.kagan/Backup-data/kraken_plan/"
+taxid: 6157 0
 threads: 30
-PE_ext: "_R{pair}.fastq.gz"
+effective_genome_size: 840000000
+PE_ext: "_R{pair}_001.fastq.gz"

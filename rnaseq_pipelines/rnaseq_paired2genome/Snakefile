@@ -21,9 +21,10 @@ rule all:
         expand("01_trim/{sample}_R1_trim.fastq.gz", sample=sample_names),
         expand("02_rrna_filtered/{sample}_fwd.fq.gz", sample=sample_names),
         expand("02_rrna_filtered/{sample}_rev.fq.gz", sample=sample_names),
-        "00_qc/multiqc.html",
         "04_star/done_all_STAR",
-        "05_featurecounts/counts.txt"
+        expand("04_star/{sample}_Aligned.filtered.bam", sample=sample_names),
+        "05_featurecounts/counts.txt",
+        "00_qc/multiqc.html"
 
 
 ######################
@@ -58,13 +59,25 @@ rule sortmerna_install:
         rm sortmerna-4.3.6-Linux.sh
         """
 
+rule genome_fasta_to_2bit:
+    input:
+        fasta = config["genome"]
+    output:
+        twobit = "workflow/resources/genome/genome.2bit"
+    conda:
+        "workflow/envs/deeptools.yml"
+    log:
+        "logs/genome_fasta_to_2bit.log"
+    shell:
+        """
+        faToTwoBit {input.fasta} {output.twobit} > {log} 2>&1
+        """
 
 ###########################
 ###                     ###
 ### Quality check steps ###
 ###                     ###
 ###########################
-
 
 rule trim:
     input:
@@ -121,7 +134,7 @@ rule fastqc_post_trim:
    shell:
        """
        mkdir -p {params.prefix}
-       fastqc -t {threads} {input.r1} {input.r2} --outdir {params.prefix} &> {log} 
+       fastqc -t {threads} {input.r1} {input.r2} --outdir {params.prefix} >> {log} 2>&1
        """
 
 rule sortmerna:
@@ -151,7 +164,6 @@ rule sortmerna:
                   --num_alignments 1 \
                   > {log} 2>&1
         """
-
 
 rule kraken2:
     input:
@@ -190,19 +202,20 @@ rule kraken2_filter:
     conda: "workflow/envs/kraken2.yml"
     params:
         r1 = "03_kraken2_report/{sample}_fwd.fq",
-        r2 = "03_kraken2_report/{sample}_rev.fq"
+        r2 = "03_kraken2_report/{sample}_rev.fq",
+        taxid = config["taxid"]
     shell:
         """
         extract_kraken_reads.py \
         -k {input.kraken2_output} \
-        -t  6157 \
+        -t  {params.taxid} \
         --include-children \
         -r {input.kraken2_report} \
         -s1 {input.r1} \
         -s2 {input.r2} \
         --fastq-output \
         -o {params.r1} \
-        -o2 {params.r2} > {log} 2>&1 
+        -o2 {params.r2}
         
         gzip {params.r1} {params.r2}
         """
@@ -211,13 +224,14 @@ rule multiqc:
     input:
         expand("00_qc/{sample}.report.txt", sample=sample_names),
         expand("00_qc/{sample}_post_trim.done", sample=sample_names),
-        expand("04_star/{sample}_Log.final.out", sample=sample_names)
+        expand("04_star/{sample}_Log.final.out", sample=sample_names),
+        expand("00_qc/{sample}_gc_corrected.stats.txt", sample=sample_names)
     output:
         "00_qc/multiqc.html"
     params:
         name = "multiqc.html"
     conda: "workflow/envs/multiqc.yml"
-    log: "logs/{multiqc.log"
+    log: "logs/multiqc.log"
     shell:
         """
         multiqc --force --no-data-dir --filename {params.name} 00_qc/ > {log} 2>&1
@@ -324,9 +338,103 @@ rule all_STAR:
         --genomeLoad Remove
         """
 
+#################################
+###                           ###
+### Post-alignment processing ###
+###                           ###
+#################################
+        
+rule samtools_filter:
+    input:
+        bam = "04_star/{sample}_Aligned.sortedByCoord.out.bam"
+    output:
+        filtered_bam = "04_star/{sample}_Aligned.filtered.bam"
+    log:
+        "logs/{sample}_samtools_filter.log"
+    conda:
+        "workflow/envs/star.yml"
+    threads:
+        config["threads"]
+    shell:
+        """
+        samtools view \
+            -b \
+            -F 0x104 \
+            -q 20 \
+            {input.bam} \
+            -@ {threads} \
+            > {output.filtered_bam} 2> {log}
+        """
+
+rule compute_gcbias:
+    input:
+        bam = "04_star/{sample}_Aligned.filtered.bam",
+        genome = "workflow/resources/genome/genome.2bit"
+    output:
+        gc_freq = "04_star/{sample}_gc_freq.txt"
+    conda:
+        "workflow/envs/deeptools.yml"
+    threads: config["threads"]
+    log:
+        "logs/{sample}_compute_gcbias.log"
+    params:
+        eff_genome_size = config["effective_genome_size"]
+    shell:
+        """
+        samtools index -@ {threads} {input.bam} > /dev/null 2>&1
+        computeGCBias \
+            --bamfile {input.bam} \
+            --genome {input.genome} \
+            --effectiveGenomeSize {params.eff_genome_size} \
+            --GCbiasFrequenciesFile {output.gc_freq} \
+            --numberOfProcessors {threads} > {log} 2>&1
+        """
+
+
+rule correct_gcbias:
+    input:
+        bam = "04_star/{sample}_Aligned.filtered.bam",
+        genome = "workflow/resources/genome/genome.2bit",
+        annotation = config["annotation"],
+        gc_freq = "04_star/{sample}_gc_freq.txt"
+    output:
+        corrected_bam = "04_star/{sample}_Aligned.gc_corrected.bam"
+    log:
+        "logs/{sample}_gc_correct.log"
+    conda:
+        "workflow/envs/deeptools.yml"
+    params:
+        eff_genome_size = config["effective_genome_size"]
+    threads: config["threads"]
+    shell:
+        """
+        correctGCBias \
+            --bamfile {input.bam} \
+            --genome {input.genome} \
+            --effectiveGenomeSize {params.eff_genome_size} \
+            --GCbiasFrequenciesFile 04_star/{wildcards.sample}_gc_freq.txt \
+            --correctedFile {output.corrected_bam} \
+            -p {threads} > {log} 2>&1
+        """
+
+rule samtools_stats:
+    input:
+        bam = "04_star/{sample}_Aligned.gc_corrected.bam"
+    output:
+        stats = "00_qc/{sample}_gc_corrected.stats.txt"
+    log:
+        "logs/{sample}_samtools_stats.log"
+    conda:
+        "workflow/envs/star.yml"
+    threads: 1
+    shell:
+        """
+        samtools stats {input.bam} > {output.stats} 2> {log}
+        """
+
 rule featurecounts:
     input:
-        bam = expand("04_star/{sample}_Aligned.sortedByCoord.out.bam", sample=sample_names),
+        bam = expand("04_star/{sample}_Aligned.gc_corrected.bam", sample=sample_names),
         annotation = "workflow/resources/genome/annotation.gtf"
     output:
         "05_featurecounts/counts.txt"

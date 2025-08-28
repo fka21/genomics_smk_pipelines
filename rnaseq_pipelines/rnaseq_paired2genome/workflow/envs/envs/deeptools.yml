@@ -1,0 +1,9 @@
+name: deeptools
+channels:
+  - bioconda
+  - conda-forge
+  - defaults
+dependencies:
+  - deeptools
+  - samtools
+  - ucsc-fatotwobit
