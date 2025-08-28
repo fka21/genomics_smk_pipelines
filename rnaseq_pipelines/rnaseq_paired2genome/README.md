@@ -33,7 +33,7 @@ Please upload to `workflow/resources` directory where the different assemblies a
 
 Prior to running it is usefull to check if all prerequisites are in place:
 
-``
+```
 snakemake -np
 ```
 
